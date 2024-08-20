@@ -289,7 +289,7 @@ class TensorflowAI {
       }
 
       return {
-        time: format(predictedTime * 1000, "dd/MM hh:ss"),
+        time: format(predictedTime * 1000, "dd/MM HH:mm"),
         predictedValue,
         action,
       };
@@ -297,7 +297,7 @@ class TensorflowAI {
 
     return {
       last5: data.map((d) => ({
-        time: format(d.time * 1000, "dd/MM/yyyy hh:ss"),
+        time: format(d.time * 1000, "dd/MM/yyyy hh:mm"),
         close: d.close,
       })),
       predictionResultsByMinutes,

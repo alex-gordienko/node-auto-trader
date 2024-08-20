@@ -101,33 +101,19 @@ class CryproCompareService {
           CryptoBase.ETH,
           10
         );
-        const testHourData = await this.getHourPairOHLCV(
-          CryptoBase.XMR,
-          CryptoBase.ETH,
-          10
-        );
 
         const predictionByMinute = await TensorflowService.predictNextPrices(
           testMinuteData
-        );
-
-        const predictionByHour = await TensorflowService.predictNextPrices(
-          testHourData
         );
 
         const formattedMinuteResult =
           predictionByMinute?.predictionResultsByMinutes
             .map((r) => `${r.time}: ${r.action}`)
             .join(", ");
-        const formattedHourResult = predictionByHour?.predictionResultsByMinutes
-          .map((r) => `${r.time}: ${r.action}`)
-          .join(", ");
-
         log(
           `Prediction by Minute model: ${formattedMinuteResult}`,
           Colors.BLUE
         );
-        log(`Prediction by Horly model: ${formattedHourResult}`, Colors.BLUE);
       },
       units,
       interval,
