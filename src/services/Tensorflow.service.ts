@@ -44,10 +44,10 @@ class TensorflowAI {
   };
 
   private startAutoTraining = async () => {
-    const unitsForMinutes = "minutes";
-    const intervalForMinutes = 10;
-    const unitsForHours = "minutes";
-    const intervalForHours = 10;
+    const unitsForMinutes = "hours";
+    const intervalForMinutes = 12;
+    const unitsForHours = "hours";
+    const intervalForHours = 24;
     log(
       `[**] Minute Model would be auto-updated each ${intervalForMinutes} ${unitsForMinutes}`,
       Colors.GREEN
@@ -204,10 +204,11 @@ class TensorflowAI {
         1,
       ]);
 
-      log("[**] Training model", Colors.GREEN);
+      log(`[**] Training ${modelType} model`, Colors.GREEN);
       console.time(`${modelType}: Training Time`);
       if (modelType === "hourlyPair") {
         await this.hourlyModel!.fit(inputTensor, outputTensor, {
+          shuffle: true,
           epochs,
           batchSize,
           callbacks: {
@@ -221,6 +222,7 @@ class TensorflowAI {
         await this.saveModel("hourlyPair");
       } else if (modelType === "minutePair") {
         await this.minuteModel!.fit(inputTensor, outputTensor, {
+          shuffle: true,
           epochs,
           batchSize,
           callbacks: {
@@ -253,7 +255,7 @@ class TensorflowAI {
     const maxClose = Math.max(...outputs);
 
     // Define the future times in minutes since the start
-    const futureMinutes = [6 * 60, 7 * 60, 8 * 60]; // Minutes after the last timestamp in the data
+    const futureMinutes = [11, 12, 13]; // Minutes after the last timestamp in the data
 
     // Convert to tensor
     const futureInputs = tf.tensor2d(futureMinutes.map((minute) => [minute]));
@@ -293,56 +295,12 @@ class TensorflowAI {
       };
     });
 
-    // Predict and denormalize the results
-    const predictionsByHours = this.minuteModel.predict(
-      futureInputs
-    ) as tf.Tensor;
-    const predictedPricesByHours = predictionsByHours
-      .dataSync()
-      .map((normPrice) => normPrice * (maxClose - minClose) + minClose);
-
-    // Display predictions as time-value pairs with Buy/Sell command
-    const predictionResultsByHours = futureMinutes.map((minute, index) => {
-      const predictedTime = startTime + minute * 60; // Convert back to Unix timestamp
-      const predictedValue = predictedPricesByHours[index];
-      const actualValue = outputs[outputs.length - 1]; // Last known price
-
-      // Determine buy/sell command based on a simple strategy
-      const priceChangeThreshold = 0.0005; // 0.05% threshold
-      let action: string;
-      if ((predictedValue - actualValue) / actualValue > priceChangeThreshold) {
-        action = "Buy";
-      } else if (
-        (actualValue - predictedValue) / actualValue >
-        priceChangeThreshold
-      ) {
-        action = "Sell";
-      } else {
-        action = "Hold";
-      }
-
-      return {
-        time: format(predictedTime * 1000, "dd/MM hh:ss"),
-        predictedValue,
-        action,
-      };
-    });
-
-    // Log predictions
-    log(
-      `Predicted Prices for the next 3 hours: ${Array.from(
-        predictedPricesByHours
-      )}`,
-      Colors.GREEN
-    );
-
     return {
-      last5Hours: data.map((d) => ({
+      last5: data.map((d) => ({
         time: format(d.time * 1000, "dd/MM/yyyy hh:ss"),
         close: d.close,
       })),
       predictionResultsByMinutes,
-      predictionResultsByHours,
     };
   };
 }

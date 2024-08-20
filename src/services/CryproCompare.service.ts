@@ -1,5 +1,6 @@
 import axios from "axios";
 import cryptoConfig from "../config/crypto.config";
+import TensorflowService from "./Tensorflow.service";
 import DigitalOceanStorageService from "./DigitalOcean.storage.service";
 import { CryptoBase } from "../types/basic.types";
 import repeatEvent from "../utils/timer";
@@ -11,10 +12,12 @@ class CryproCompareService {
   private readonly apiUrl: string = "https://min-api.cryptocompare.com/data/v2";
   private pairMinuteTimer: NodeJS.Timeout | null = null;
   private pairHourTimer: NodeJS.Timeout | null = null;
+  private predictionTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     log("[*] Initializing Crypto Compare Service", Colors.RED);
     this.startAutoUpdate();
+    this.startAutoPrediction();
   }
 
   public stopPairMinuteTimer = () => {
@@ -29,11 +32,17 @@ class CryproCompareService {
     }
   };
 
+  public stopPredictionTimer = () => {
+    if (this.predictionTimer) {
+      clearInterval(this.predictionTimer);
+    }
+  };
+
   private startAutoUpdate = async () => {
-    const unitsForMinutes = "minutes";
-    const intervalForMinutes = 4;
+    const unitsForMinutes = "hours";
+    const intervalForMinutes = 12;
     const unitsForHours = "hours";
-    const intervalForHours = 2;
+    const intervalForHours = 24;
     log(
       `[**] Training dataset for Minute Model would be auto-updated each ${intervalForMinutes} ${unitsForMinutes}`,
       Colors.BLUE
@@ -74,6 +83,54 @@ class CryproCompareService {
         ),
       units: unitsForHours,
       interval: intervalForHours,
+    });
+  };
+
+  private startAutoPrediction = async () => {
+    const units = "minutes";
+    const interval = 2;
+    log(
+      `[**] Prediction would be auto-updated each ${interval} ${units}`,
+      Colors.BLUE
+    );
+
+    this.predictionTimer = repeatEvent({
+      callback: async () => {
+        const testMinuteData = await this.getMinutePairOHLCV(
+          CryptoBase.XMR,
+          CryptoBase.ETH,
+          10
+        );
+        const testHourData = await this.getHourPairOHLCV(
+          CryptoBase.XMR,
+          CryptoBase.ETH,
+          10
+        );
+
+        const predictionByMinute = await TensorflowService.predictNextPrices(
+          testMinuteData
+        );
+
+        const predictionByHour = await TensorflowService.predictNextPrices(
+          testHourData
+        );
+
+        const formattedMinuteResult =
+          predictionByMinute?.predictionResultsByMinutes
+            .map((r) => `${r.time}: ${r.action}`)
+            .join(", ");
+        const formattedHourResult = predictionByHour?.predictionResultsByMinutes
+          .map((r) => `${r.time}: ${r.action}`)
+          .join(", ");
+
+        log(
+          `Prediction by Minute model: ${formattedMinuteResult}`,
+          Colors.BLUE
+        );
+        log(`Prediction by Horly model: ${formattedHourResult}`, Colors.BLUE);
+      },
+      units,
+      interval,
     });
   };
 
