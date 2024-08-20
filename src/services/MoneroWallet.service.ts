@@ -32,7 +32,7 @@ class MoneroWalletService {
 
       wallet.startSyncing(5000);
     } catch (error) {
-      log("Error while create wallet", Colors.RED);
+      log(`Error while connecting to wallet: ${error}`, Colors.RED);
     }
   };
 
