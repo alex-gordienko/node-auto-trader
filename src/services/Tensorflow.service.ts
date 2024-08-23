@@ -58,20 +58,23 @@ class TensorflowAI {
       Colors.GREEN
     );
 
-    const trainDataByMinutes =
-      await DigitalOceanStorageService.getTradingHistory("XMR-ETH-minute");
-    const trainDataByHours = await DigitalOceanStorageService.getTradingHistory(
-      "XMR-ETH-hours"
-    );
-
     this.pairMinuteTimer = repeatEvent({
-      callback: () => this.trainModel("minutePair", trainDataByMinutes),
+      callback: async () => {
+        const trainDataByMinutes =
+          await DigitalOceanStorageService.getTradingHistory("XMR-ETH-minute");
+
+        this.trainModel("minutePair", trainDataByMinutes)
+      },
       units: unitsForMinutes,
       interval: intervalForMinutes,
     });
 
     this.pairHourTimer = repeatEvent({
-      callback: () => this.trainModel("hourlyPair", trainDataByHours),
+      callback: async () => {
+        const trainDataByHours =
+          await DigitalOceanStorageService.getTradingHistory("XMR-ETH-hours");
+        this.trainModel("hourlyPair", trainDataByHours)
+      },
       units: unitsForHours,
       interval: intervalForHours,
     });

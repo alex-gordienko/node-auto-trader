@@ -53,34 +53,34 @@ class CryproCompareService {
       Colors.BLUE
     );
 
-    const tradingMinuteHistory = await this.getMinutePairOHLCV(
-      CryptoBase.XMR,
-      CryptoBase.ETH,
-      2000
-    );
-
-    const tradingHourlyHistory = await this.getHourPairOHLCV(
-      CryptoBase.XMR,
-      CryptoBase.ETH,
-      2000
-    );
-
     this.pairMinuteTimer = repeatEvent({
-      callback: () =>
+      callback: async () => {
+        const tradingMinuteHistory = await this.getMinutePairOHLCV(
+          CryptoBase.XMR,
+          CryptoBase.ETH,
+          2000
+        );
         DigitalOceanStorageService.pushTradingHistory(
           "XMR-ETH-minute",
           tradingMinuteHistory
-        ),
+        );
+      },
       units: unitsForMinutes,
       interval: intervalForMinutes,
     });
 
     this.pairHourTimer = repeatEvent({
-      callback: () =>
+      callback: async () => {
+        const tradingHourlyHistory = await this.getHourPairOHLCV(
+          CryptoBase.XMR,
+          CryptoBase.ETH,
+          2000
+        );
         DigitalOceanStorageService.pushTradingHistory(
           "XMR-ETH-hours",
           tradingHourlyHistory
-        ),
+        );
+      },
       units: unitsForHours,
       interval: intervalForHours,
     });
