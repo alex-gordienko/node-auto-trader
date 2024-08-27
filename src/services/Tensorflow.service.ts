@@ -1,6 +1,5 @@
 import * as tf from "@tensorflow/tfjs-node";
 import fse from "fs-extra";
-import { format } from "date-fns";
 import config from "../config/digitalOcean.config";
 
 import {
@@ -246,7 +245,7 @@ class TensorflowAI {
   public predictNextPrices = async (input: ICyptoCompareHistoryMinutePair) => {
     if (!this.hourlyModel || !this.minuteModel) {
       console.error("Model not initialized");
-      return;
+      return null;
     }
 
     const data = input.Data.Data.map((d) => ({ time: d.time, close: d.close }));
@@ -258,7 +257,7 @@ class TensorflowAI {
     const maxClose = Math.max(...outputs);
 
     // Define the future times in minutes since the start
-    const futureMinutes = [11, 12, 13]; // Minutes after the last timestamp in the data
+    const futureMinutes = [11]; // Minutes after the last timestamp in the data
 
     // Convert to tensor
     const futureInputs = tf.tensor2d(futureMinutes.map((minute) => [minute]));
@@ -292,15 +291,15 @@ class TensorflowAI {
       }
 
       return {
-        time: format(predictedTime * 1000, "dd/MM HH:mm"),
+        time: predictedTime,
         predictedValue,
         action,
       };
     });
 
     return {
-      last5: data.map((d) => ({
-        time: format(d.time * 1000, "dd/MM/yyyy hh:mm"),
+      last10: data.map((d) => ({
+        time: d.time,
         close: d.close,
       })),
       predictionResultsByMinutes,

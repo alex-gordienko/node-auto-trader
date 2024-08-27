@@ -6,6 +6,8 @@ import { CryptoBase } from "../types/basic.types";
 import repeatEvent from "../utils/timer";
 import { ICyptoCompareHistoryMinutePair } from "../types/cryptoCompare.types";
 import { log, Colors } from "../utils/colored-console";
+import { format } from "date-fns";
+import CryptoExchangeService from "./CryptoExchange.service";
 
 class CryproCompareService {
   private readonly apiKey: string = cryptoConfig.cryptoCompareApiKey;
@@ -15,7 +17,7 @@ class CryproCompareService {
   private predictionTimer: NodeJS.Timeout | null = null;
 
   constructor() {
-    log("[*] Initializing Crypto Compare Service", Colors.RED);
+    log("[*] Initializing Crypto Compare Service", Colors.WHITE);
     this.startAutoUpdate();
     this.startAutoPrediction();
   }
@@ -45,12 +47,12 @@ class CryproCompareService {
     const intervalForHours = 24;
     log(
       `[**] Training dataset for Minute Model would be auto-updated each ${intervalForMinutes} ${unitsForMinutes}`,
-      Colors.BLUE
+      Colors.WHITE
     );
 
     log(
       `[**] Training dataset for Hourly Model would be auto-updated each ${intervalForHours} ${unitsForHours}`,
-      Colors.BLUE
+      Colors.WHITE
     );
 
     this.pairMinuteTimer = repeatEvent({
@@ -91,7 +93,7 @@ class CryproCompareService {
     const interval = 2;
     log(
       `[**] Prediction would be auto-updated each ${interval} ${units}`,
-      Colors.BLUE
+      Colors.WHITE
     );
 
     this.predictionTimer = repeatEvent({
@@ -106,14 +108,35 @@ class CryproCompareService {
           testMinuteData
         );
 
+        if (!predictionByMinute) { 
+          log("Prediction by Minute model: No prediction", Colors.RED);
+          return;
+        }
+
         const formattedMinuteResult =
-          predictionByMinute?.predictionResultsByMinutes
-            .map((r) => `${r.time}: ${r.action}`)
+          predictionByMinute.predictionResultsByMinutes
+            .map(
+              (r) =>
+                `${format(r.time * 1000, "dd/MM/yyyy hh:mm")}: ${r.action} (${
+                  r.predictedValue
+                })`
+            )
             .join(", ");
         log(
           `Prediction by Minute model: ${formattedMinuteResult}`,
-          Colors.BLUE
+          Colors.WHITE
         );
+
+        // making swipe due to prediction (THE MOST IMPORTANT PART)
+        if(predictionByMinute.predictionResultsByMinutes[0].action === 'Buy') {
+          log(`[**] Buying XMR`, Colors.GREEN);
+          // await CryptoExchangeService.changeETHtoXMR();
+        } else if(predictionByMinute.predictionResultsByMinutes[0].action === 'Sell') {
+          log(`[**] Selling XMR`, Colors.RED);
+          // await CryptoExchangeService.changeXMRtoETH();
+        } else {
+          log(`[**] No action`, Colors.YELLOW);
+        }
       },
       units,
       interval,

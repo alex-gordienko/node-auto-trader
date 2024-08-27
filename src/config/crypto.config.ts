@@ -12,9 +12,12 @@ const cryptoConfig = {
 
   // wallet keys
   etheriumPrivateKey: process.env.ETHERIUM_PRIVATE_KEY || "YOUR_PRIVATE",
+  moneroPrivateKey: process.env.MONERO_PRIVATE_KEY || "YOUR_PRIVATE",
   bitcoinPrivateKey: process.env.BITCOIN_PRIVATE_KEY || "YOUR_PRIVATE",
 
   requestLimitMinutePair: process.env.REQUEST_LIMIT || 10,
+
+  environment: process.env.ENVIRONMENT || "development",
 };
 
 export default cryptoConfig;

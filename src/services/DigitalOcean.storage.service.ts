@@ -8,6 +8,7 @@ import {
   ICyptoCompareHistoryMinutePair,
 } from "../types/cryptoCompare.types";
 import { log, Colors } from "../utils/colored-console";
+import { ICryproExchangeWalletHistory } from "../types/cryptoExchange.types";
 
 class DigitalOceanStorageService {
   public spacesEndpoint: aws.Endpoint;
@@ -50,10 +51,10 @@ class DigitalOceanStorageService {
     }
   };
 
-  private getSavedFile = async (
+  private getSavedFile = async <T>(
     name: string,
     bucketName: string
-  ): Promise<Map<number, ICyptoCompareData> | null> => {
+  ): Promise<Map<number, T> | null> => {
     try {
       const splittedEndpoint = config.endpoint.split("//");
       const fileURL = `${splittedEndpoint[0]}//${bucketName}.${splittedEndpoint[1]}/${name}`;
@@ -62,7 +63,7 @@ class DigitalOceanStorageService {
 
       if (response.data) {
         // pre-saved file has Map<number, ICyptoCompareData> format
-        return new Map<number, ICyptoCompareData>(response.data);
+        return new Map<number, T>(response.data);
       } else return null;
     } catch (error) {
       log("Error while getting saved file", Colors.RED);
@@ -81,7 +82,10 @@ class DigitalOceanStorageService {
       data.Data.Data.map((d) => [d.time, d])
     );
 
-    let savedDataMap = await this.getSavedFile(fileName, bucketName);
+    let savedDataMap = await this.getSavedFile<ICyptoCompareData>(
+      fileName,
+      bucketName
+    );
 
     let newRowsCount = 0;
     if (savedDataMap) {
@@ -116,7 +120,10 @@ class DigitalOceanStorageService {
     const bucketName = config.bucket;
     const fileName = `${historyName}-trading-history.json`;
 
-    const result = await this.getSavedFile(fileName, bucketName);
+    const result = await this.getSavedFile<ICyptoCompareData>(
+      fileName,
+      bucketName
+    );
 
     if (!result) {
       return [];
@@ -124,6 +131,52 @@ class DigitalOceanStorageService {
 
     return Array.from(result.values());
   };
+
+  public pushWalletBalanceHistory = async (
+    coin: "XMR" | "ETH",
+    data: ICryproExchangeWalletHistory
+  ): Promise<string | null> => {
+    const bucketName = config.bucket;
+    const fileName = `${coin}-wallet-balance-history.json`;
+
+    let savedDataMap = await this.getSavedFile<ICryproExchangeWalletHistory>(
+      fileName,
+      bucketName
+    );
+
+    if (!savedDataMap) {
+      log("[**] No saved file found", Colors.BLUE);
+      savedDataMap = new Map<number, ICryproExchangeWalletHistory>();
+    }
+
+    savedDataMap.set(data.timestamp, data);
+
+    const input: aws.S3.PutObjectRequest = {
+      Bucket: config.bucket,
+      Key: fileName,
+      Body: JSON.stringify(Array.from(savedDataMap)),
+      ContentType: "plain/json",
+      ACL: "public-read",
+    };
+
+    return this.uploadFile(bucketName, input);
+  }
+
+  public getWalletBalanceHistory = async (coin: "XMR" | "ETH"): Promise<ICryproExchangeWalletHistory[]> => { 
+    const bucketName = config.bucket;
+    const fileName = `${coin}-wallet-balance-history.json`;
+
+    const result = await this.getSavedFile<ICryproExchangeWalletHistory>(
+      fileName,
+      bucketName
+    );
+
+    if (!result) {
+      return [];
+    }
+
+    return Array.from(result.values());
+  }
 
   public saveModel = async (
     localPath: string,
