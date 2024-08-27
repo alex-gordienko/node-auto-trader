@@ -7,7 +7,7 @@ import EtheriumWalletService from "./EtheriumWallet.service";
 class CryptoExchangeService {
   private readonly changeNOW_base_url: string = "https://api.changenow.io/v1";
   private readonly XMR_wallet: string =
-    "428jxrCmtNsEpbbmdik9DRjgcCaqeb6Y33fAgnEgddPV5oCzm6fmkjy82SGKgRvqi8cSSH1GDyY2UUq8wVwUDQPEUUgeppY";
+    "46fZFvyicjt8vmsgrr7Sjt9yTuwim6BzHCTMHRS5CV9kZpj2aJ7Z3oSfMSGGX4FMgabDutDakJcmCKm9FzwRzwui2msCuAm";
   private readonly ETH_wallet: string =
     "0x1d2d00D7A74036fcd3FcbB3E030A2be2077eEfBa";
   private readonly changeNOW_api_key: string = cryptoConfig.changeNowApiKey;

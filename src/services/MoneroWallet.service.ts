@@ -37,7 +37,7 @@ class MoneroWalletService {
 
   private startAutoUpdate = async () => {
     const units = "minutes";
-    const interval = 1;
+    const interval = 11;
 
     log(
       `[**] Wallet balance would be auto-updated each ${interval} ${units}`,
@@ -51,7 +51,7 @@ class MoneroWalletService {
           await DigitalOceanStorageService.getWalletBalanceHistory("XMR");
 
         // get current balance
-        const balance = await this.getBalance(this.wallet);
+        const balance = await this.getBalance();
 
         walletAmountStatistic("XMR", balance, walletHistory);
 
@@ -66,10 +66,10 @@ class MoneroWalletService {
     });
   };
 
-  public getBalance = async (wallet: Ethers.ethers.Wallet): Promise<number> => {
+  public getBalance = async (): Promise<number> => {
     try {
-      if (wallet.provider) {
-        const balance = await wallet.provider?.getBalance(wallet.address);
+      if (this.wallet.provider) {
+        const balance = await this.wallet.provider?.getBalance(this.wallet.address);
 
         return Number(MoneroWalletService.convertBigIntToXMR(balance));
       }

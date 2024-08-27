@@ -8,6 +8,8 @@ import { ICyptoCompareHistoryMinutePair } from "../types/cryptoCompare.types";
 import { log, Colors } from "../utils/colored-console";
 import { format } from "date-fns";
 import CryptoExchangeService from "./CryptoExchange.service";
+import EtheriumWalletService from "./EtheriumWallet.service";
+import MoneroWalletService from "./MoneroWallet.service";
 
 class CryproCompareService {
   private readonly apiKey: string = cryptoConfig.cryptoCompareApiKey;
@@ -57,15 +59,9 @@ class CryproCompareService {
 
     this.pairMinuteTimer = repeatEvent({
       callback: async () => {
-        const tradingMinuteHistory = await this.getMinutePairOHLCV(
-          CryptoBase.XMR,
-          CryptoBase.ETH,
-          2000
-        );
-        DigitalOceanStorageService.pushTradingHistory(
-          "XMR-ETH-minute",
-          tradingMinuteHistory
-        );
+        const tradingMinuteHistory = await this.getMinutePairOHLCV(CryptoBase.XMR, CryptoBase.ETH, 2000);
+
+        DigitalOceanStorageService.pushTradingHistory("XMR-ETH-minute", tradingMinuteHistory);
       },
       units: unitsForMinutes,
       interval: intervalForMinutes,
@@ -73,15 +69,9 @@ class CryproCompareService {
 
     this.pairHourTimer = repeatEvent({
       callback: async () => {
-        const tradingHourlyHistory = await this.getHourPairOHLCV(
-          CryptoBase.XMR,
-          CryptoBase.ETH,
-          2000
-        );
-        DigitalOceanStorageService.pushTradingHistory(
-          "XMR-ETH-hours",
-          tradingHourlyHistory
-        );
+        const tradingHourlyHistory = await this.getHourPairOHLCV(CryptoBase.XMR, CryptoBase.ETH, 2000);
+
+        DigitalOceanStorageService.pushTradingHistory("XMR-ETH-hours", tradingHourlyHistory);
       },
       units: unitsForHours,
       interval: intervalForHours,
@@ -90,50 +80,46 @@ class CryproCompareService {
 
   private startAutoPrediction = async () => {
     const units = "minutes";
-    const interval = 2;
-    log(
-      `[**] Prediction would be auto-updated each ${interval} ${units}`,
-      Colors.WHITE
-    );
+    const interval = 10;
+    log(`[**] Prediction would be auto-updated each ${interval} ${units}`, Colors.WHITE);
 
     this.predictionTimer = repeatEvent({
       callback: async () => {
-        const testMinuteData = await this.getMinutePairOHLCV(
-          CryptoBase.XMR,
-          CryptoBase.ETH,
-          10
-        );
+        const testMinuteData = await this.getMinutePairOHLCV(CryptoBase.XMR, CryptoBase.ETH, 10);
 
-        const predictionByMinute = await TensorflowService.predictNextPrices(
-          testMinuteData
-        );
+        const predictionByMinute = await TensorflowService.predictNextPrices(testMinuteData);
 
-        if (!predictionByMinute) { 
+        if (!predictionByMinute) {
           log("Prediction by Minute model: No prediction", Colors.RED);
           return;
         }
 
-        const formattedMinuteResult =
-          predictionByMinute.predictionResultsByMinutes
-            .map(
-              (r) =>
-                `${format(r.time * 1000, "dd/MM/yyyy hh:mm")}: ${r.action} (${
-                  r.predictedValue
-                })`
-            )
-            .join(", ");
-        log(
-          `Prediction by Minute model: ${formattedMinuteResult}`,
-          Colors.WHITE
-        );
+        const formattedMinuteResult = predictionByMinute.predictionResultsByMinutes
+          .map((r) => `${format(r.time * 1000, "dd/MM/yyyy hh:mm")}: ${r.action} (${r.predictedValue})`)
+          .join(", ");
+
+        log(`Prediction by Minute model: ${formattedMinuteResult}`, Colors.WHITE);
+
+        const ETHBalance = await EtheriumWalletService.getBalance();
+        const XMRBalance = await MoneroWalletService.getBalance();
 
         // making swipe due to prediction (THE MOST IMPORTANT PART)
-        if(predictionByMinute.predictionResultsByMinutes[0].action === 'Buy') {
-          log(`[**] Buying XMR`, Colors.GREEN);
-          // await CryptoExchangeService.changeETHtoXMR();
-        } else if(predictionByMinute.predictionResultsByMinutes[0].action === 'Sell') {
-          log(`[**] Selling XMR`, Colors.RED);
-          // await CryptoExchangeService.changeXMRtoETH();
+        if (predictionByMinute.predictionResultsByMinutes[0].action === "Buy") {
+          // The lowest amount of ETH (~$15)
+          if (ETHBalance >= 0.0056) {
+            log(`[**] Buying XMR`, Colors.GREEN);
+            await CryptoExchangeService.changeETHtoXMR();
+          } else {
+            log(`[**] Cannot buy XMR, because ETH amount is too low (${ETHBalance})`, Colors.RED);
+          }
+        } else if (predictionByMinute.predictionResultsByMinutes[0].action === "Sell") {
+          // The lowest amount of XMR (~$15)
+          if (XMRBalance >= 0.093) {
+            log(`[**] Selling XMR`, Colors.GREEN);
+            await CryptoExchangeService.changeXMRtoETH();
+          } else {
+            log(`[**] Cannot buy ETH, because XMR amount is too low (${XMRBalance})`, Colors.RED);
+          }
         } else {
           log(`[**] No action`, Colors.YELLOW);
         }

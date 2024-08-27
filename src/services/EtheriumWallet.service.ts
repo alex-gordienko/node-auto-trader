@@ -31,7 +31,7 @@ class EtheriumWallet {
 
   private startAutoUpdate = async () => {
     const units = "minutes";
-    const interval = 3;
+    const interval = 11;
 
     log(
       `[**] Wallet balance would be auto-updated each ${interval} ${units}`,
@@ -44,7 +44,7 @@ class EtheriumWallet {
         const walletHistory = await DigitalOceanStorageService.getWalletBalanceHistory('ETH');
 
         // get current balance
-        const balance = await this.getBalance(this.wallet);
+        const balance = await this.getBalance();
 
         walletAmountStatistic("ETH", balance, walletHistory);
 
@@ -91,10 +91,10 @@ class EtheriumWallet {
     }
   };
 
-  public getBalance = async (wallet: Ethers.ethers.Wallet): Promise<number> => {
+  public getBalance = async (): Promise<number> => {
     try {
-      if (wallet.provider) {
-        const balance = await wallet.provider?.getBalance(wallet.address);
+      if (this.wallet.provider) {
+        const balance = await this.wallet.provider?.getBalance(this.wallet.address);
 
         return Number(EtheriumWallet.convertBigIntToETH(balance));
       }
