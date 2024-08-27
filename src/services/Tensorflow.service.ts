@@ -9,6 +9,7 @@ import {
 import { log, Colors } from "../utils/colored-console";
 import DigitalOceanStorageService from "./DigitalOcean.storage.service";
 import repeatEvent from "../utils/timer";
+import cryptoConfig from "../config/crypto.config";
 
 class TensorflowAI {
   private readonly hourlyModelLocalDir: string = `${__dirname}/../miner/models/hourly`;
@@ -43,10 +44,10 @@ class TensorflowAI {
   };
 
   private startAutoTraining = async () => {
-    const unitsForMinutes = "hours";
-    const intervalForMinutes = 12;
-    const unitsForHours = "hours";
-    const intervalForHours = 24;
+    const unitsForMinutes = cryptoConfig.autoRetrainingMinuteModelInterval.units;
+    const intervalForMinutes = cryptoConfig.autoRetrainingMinuteModelInterval.interval;
+    const unitsForHours = cryptoConfig.autoRetrainingHourModelInterval.units;
+    const intervalForHours = cryptoConfig.autoRetrainingHourModelInterval.interval;
     log(
       `[**] Minute Model would be auto-updated each ${intervalForMinutes} ${unitsForMinutes}`,
       Colors.GREEN
@@ -60,7 +61,7 @@ class TensorflowAI {
     this.pairMinuteTimer = repeatEvent({
       callback: async () => {
         const trainDataByMinutes =
-          await DigitalOceanStorageService.getTradingHistory("XMR-ETH-minute");
+          await DigitalOceanStorageService.getTradingHistory("BNB-ETH-minute");
 
         this.trainModel("minutePair", trainDataByMinutes)
       },
@@ -71,7 +72,7 @@ class TensorflowAI {
     this.pairHourTimer = repeatEvent({
       callback: async () => {
         const trainDataByHours =
-          await DigitalOceanStorageService.getTradingHistory("XMR-ETH-hours");
+          await DigitalOceanStorageService.getTradingHistory("BNB-ETH-hours");
         this.trainModel("hourlyPair", trainDataByHours)
       },
       units: unitsForHours,

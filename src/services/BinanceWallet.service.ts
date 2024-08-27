@@ -5,28 +5,28 @@ import DigitalOceanStorageService from "./DigitalOcean.storage.service";
 import { walletAmountStatistic } from "../utils/walletAmountStatistic";
 import cryptoConfig from "../config/crypto.config";
 
-class MoneroWalletService {
+class BinanceWalletService {
   private readonly infuraAPIkey = cryptoConfig.infuraApiKey;
-  private readonly moneroPrivateKey = cryptoConfig.moneroPrivateKey;
+  private readonly binancePrivateKey = cryptoConfig.bnbPrivateKey;
 
   private wallet: Ethers.ethers.Wallet;
   private walletTimer: NodeJS.Timeout | null = null;
 
   constructor() {
-    log("[*] Initializing Monero Wallet Service", Colors.YELLOW);
+    log("[*] Initializing Binance Wallet Service", Colors.YELLOW);
 
     const provider = new Ethers.JsonRpcProvider(
       `https://mainnet.infura.io/v3/${this.infuraAPIkey}`
     );
 
-    const wallet = new Ethers.ethers.Wallet(this.moneroPrivateKey, provider);
+    const wallet = new Ethers.ethers.Wallet(this.binancePrivateKey, provider);
 
     this.wallet = wallet;
 
     this.startAutoUpdate();
   }
 
-  private static convertBigIntToXMR = (balance: bigint) =>
+  private static convertBigIntToBNB = (balance: bigint) =>
     Ethers.ethers.formatEther(balance);
 
   public stopWalletTimer = () => {
@@ -36,8 +36,8 @@ class MoneroWalletService {
   };
 
   private startAutoUpdate = async () => {
-    const units = "minutes";
-    const interval = 11;
+    const units = cryptoConfig.autoUpdateWalletBalanceInterval.units;
+    const interval = cryptoConfig.autoUpdateWalletBalanceInterval.interval;
 
     log(
       `[**] Wallet balance would be auto-updated each ${interval} ${units}`,
@@ -48,15 +48,15 @@ class MoneroWalletService {
       callback: async () => {
         // get history for statistics
         const walletHistory =
-          await DigitalOceanStorageService.getWalletBalanceHistory("XMR");
+          await DigitalOceanStorageService.getWalletBalanceHistory("BNB");
 
         // get current balance
         const balance = await this.getBalance();
 
-        walletAmountStatistic("XMR", balance, walletHistory);
+        walletAmountStatistic("BNB", balance, walletHistory);
 
         // push new value to DigitalOcean
-        await DigitalOceanStorageService.pushWalletBalanceHistory("XMR", {
+        await DigitalOceanStorageService.pushWalletBalanceHistory("BNB", {
           amount: balance,
           timestamp: new Date().getTime(),
         });
@@ -71,7 +71,7 @@ class MoneroWalletService {
       if (this.wallet.provider) {
         const balance = await this.wallet.provider?.getBalance(this.wallet.address);
 
-        return Number(MoneroWalletService.convertBigIntToXMR(balance));
+        return Number(BinanceWalletService.convertBigIntToBNB(balance));
       }
       return 0;
     } catch (error) {
@@ -104,4 +104,4 @@ class MoneroWalletService {
   };
 }
 
-export default new MoneroWalletService();
+export default new BinanceWalletService();

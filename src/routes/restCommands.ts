@@ -19,8 +19,8 @@ export default () => {
   });
 
   router.get(routes.REST.LEARN_TENSORFLOW, async (req, res) => {
-    const trainDataByMinutes = await DigitalOceanStorageService.getTradingHistory('XMR-ETH-minute')
-    const trainDataByHours = await DigitalOceanStorageService.getTradingHistory('XMR-ETH-hours')
+    const trainDataByMinutes = await DigitalOceanStorageService.getTradingHistory("BNB-ETH-minute");
+    const trainDataByHours = await DigitalOceanStorageService.getTradingHistory("BNB-ETH-hours");
 
     TensorflowService.trainModel("minutePair", trainDataByMinutes);
     TensorflowService.trainModel("hourlyPair", trainDataByHours);
@@ -32,14 +32,8 @@ export default () => {
   });
 
   router.get(routes.REST.GET_PREDICTION, async (req, res) => {
-    const testHourData = await CryproCompareService.getHourPairOHLCV(
-      CryptoBase.XMR,
-      CryptoBase.ETH,
-      5
-    );
-    const predictionByHour = await TensorflowService.predictNextPrices(
-      testHourData
-    );
+    const testHourData = await CryproCompareService.getHourPairOHLCV(CryptoBase.BNB, CryptoBase.ETH, 5);
+    const predictionByHour = await TensorflowService.predictNextPrices(testHourData);
 
     res.json({
       status: "ok",
@@ -49,29 +43,19 @@ export default () => {
   });
 
   router.get(routes.REST.SAVE_HISTORY, async (req, res) => {
-    const trainDataByMinutes = await CryproCompareService.getMinutePairOHLCV(
-      CryptoBase.XMR,
-      CryptoBase.ETH,
-      2000
+    const trainDataByMinutes = await CryproCompareService.getMinutePairOHLCV(CryptoBase.BNB, CryptoBase.ETH, 2000);
+
+    const trainDataByHours = await CryproCompareService.getHourPairOHLCV(CryptoBase.BNB, CryptoBase.ETH, 2000);
+
+    const tradingMinuteHistoryLink = await DigitalOceanStorageService.pushTradingHistory(
+      "BNB-ETH-minute",
+      trainDataByMinutes
     );
 
-    const trainDataByHours = await CryproCompareService.getHourPairOHLCV(
-      CryptoBase.XMR,
-      CryptoBase.ETH,
-      2000
+    const tradingHourlyHistoryLink = await DigitalOceanStorageService.pushTradingHistory(
+      "BNB-ETH-hours",
+      trainDataByHours
     );
-
-    const tradingMinuteHistoryLink =
-      await DigitalOceanStorageService.pushTradingHistory(
-        "XMR-ETH-minute",
-        trainDataByMinutes
-      );
-
-    const tradingHourlyHistoryLink =
-      await DigitalOceanStorageService.pushTradingHistory(
-        "XMR-ETH-hours",
-        trainDataByHours
-      );
 
     res.json({
       status: "ok",

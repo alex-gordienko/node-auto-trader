@@ -28,6 +28,7 @@ export enum CryptoBase {
 	BTC = "BTC",
 	ETH = "ETH",
 	USDT = "USDT",
+	BNB = "BNB",
 	XMR = "XMR",
 }
 

@@ -1,79 +1,63 @@
 import axios from "axios";
 import cryptoConfig from "../config/crypto.config";
 import { log, Colors } from "../utils/colored-console";
-import MoneroWalletService from "./MoneroWallet.service";
+import MoneroWalletService from "./BinanceWallet.service";
 import EtheriumWalletService from "./EtheriumWallet.service";
 
 class CryptoExchangeService {
   private readonly changeNOW_base_url: string = "https://api.changenow.io/v1";
-  private readonly XMR_wallet: string =
-    "46fZFvyicjt8vmsgrr7Sjt9yTuwim6BzHCTMHRS5CV9kZpj2aJ7Z3oSfMSGGX4FMgabDutDakJcmCKm9FzwRzwui2msCuAm";
-  private readonly ETH_wallet: string =
-    "0x1d2d00D7A74036fcd3FcbB3E030A2be2077eEfBa";
+  private readonly BNB_wallet: string = cryptoConfig.bnbWallet;
+  private readonly ETH_wallet: string = cryptoConfig.etheriumWallet;
   private readonly changeNOW_api_key: string = cryptoConfig.changeNowApiKey;
 
   constructor() {
     log("[*] Initializing Crypto Exchange Service", Colors.MAGENTA);
     this.getAvailableTradePairs();
-    this.minimalExchangeAmount("xmr", "eth");
-    this.minimalExchangeAmount("eth", "xmr");
+    this.minimalExchangeAmount("bnbbsc", "eth");
+    this.minimalExchangeAmount("eth", "bnbbsc");
   }
 
-  public getAvailableTradePairs = async () => {
+  public getAvailableTradePairs = async (): Promise<boolean> => {
     try {
-      const response = await axios.get(
-        `${this.changeNOW_base_url}/market-info/available-pairs`,
-        {
-          headers: {
-            "x-api-key": this.changeNOW_api_key,
-          },
-        }
-      );
-      const isXMRETHAvailable = response.data.find(
-        (pair: string) => pair === "xmr_eth"
-      );
+      const response = await axios.get(`${this.changeNOW_base_url}/market-info/available-pairs`, {
+        headers: {
+          "x-api-key": this.changeNOW_api_key,
+        },
+      });
 
-      const isETHXMRAvailable = response.data.find(
-        (pair: string) => pair === "eth_xmr"
-      );
+      const isBNBETHAvailable = response.data.find((pair: string) => pair === "bnbbsc_eth");
 
-      if (!isXMRETHAvailable) {
-        log("XMR-ETH pair is not available", Colors.RED);
+      const isETHBNBAvailable = response.data.find((pair: string) => pair === "eth_bnbbsc");
+
+      if (!isBNBETHAvailable) {
+        log("BNB-ETH pair is not available", Colors.RED);
         return false;
       }
 
-      if (!isETHXMRAvailable) {
-        log("ETH-XMR pair is not available", Colors.RED);
+      if (!isETHBNBAvailable) {
+        log("ETH-BNB pair is not available", Colors.RED);
         return false;
       }
 
-      log("[**] XMR-ETH and ETH-XMR tradings are available", Colors.MAGENTA);
+      log("[**] BNB-ETH and ETH-BNB tradings are available", Colors.MAGENTA);
       return true;
     } catch (error) {
       log("Error getting available trade pairs", Colors.RED);
       log(error, Colors.RED);
+      return false;
     }
   };
 
-  public minimalExchangeAmount = async (
-    from: string,
-    to: string
-  ): Promise<number> => {
+  public minimalExchangeAmount = async (from: string, to: string): Promise<number> => {
     try {
-      const response = await axios.get(
-        `${this.changeNOW_base_url}/min-amount/${from}_${to}`,
-        {
-          headers: {
-            "x-api-key": this.changeNOW_api_key,
-          },
-        }
-      );
+      const response = await axios.get(`${this.changeNOW_base_url}/min-amount/${from}_${to}`, {
+        headers: {
+          "x-api-key": this.changeNOW_api_key,
+        },
+      });
 
       const minimalAmount = response.data.minAmount;
-      log(
-        `[**] Minimal exchange amount for ${from}-${to} pair is ${minimalAmount}`,
-        Colors.MAGENTA
-      );
+      log(`[**] Minimal exchange amount for ${from}-${to} pair is ${minimalAmount}`, Colors.MAGENTA);
       return minimalAmount as number;
     } catch (error) {
       log("Error getting minimal exchange amount", Colors.RED);
@@ -82,51 +66,33 @@ class CryptoExchangeService {
     }
   };
 
-  public changeXMRtoETH = async () => {
-    log(`[**] Changing XMR to ETH`, Colors.MAGENTA);
+  public changeBNBtoETH = async () => {
+    log(`[**] Changing BNB to ETH`, Colors.MAGENTA);
     try {
-      const isXMR_ETHAvailable = await this.getAvailableTradePairs();
-      const minimalAmount = await this.minimalExchangeAmount("xmr", "eth");
+      const isBNB_ETHAvailable = await this.getAvailableTradePairs();
+      const minimalAmount = await this.minimalExchangeAmount("bnbbsc", "eth");
 
-      if (!isXMR_ETHAvailable || minimalAmount === 0) {
-        log(
-          "[***] XMR-ETH pair is not available or minimal amount is 0",
-          Colors.RED
-        );
+      if (!isBNB_ETHAvailable || minimalAmount === 0) {
+        log("[***] BNB-ETH pair is not available or minimal amount is 0", Colors.RED);
         return;
       }
 
-      const response = await axios.post(
-        `${this.changeNOW_base_url}/transactions/${this.changeNOW_api_key}`,
-        {
-          from: "xmr",
-          to: "eth",
-          amount: minimalAmount,
-          address: this.ETH_wallet,
-          flow: "standard",
-        }
-      );
+      const response = await axios.post(`${this.changeNOW_base_url}/transactions/${this.changeNOW_api_key}`, {
+        from: "bnbbsc",
+        to: "eth",
+        amount: minimalAmount,
+        address: this.ETH_wallet,
+        flow: "standard",
+      });
 
       const transactionData = response.data;
-      log(
-        `[***] Exchange transaction ID: ${transactionData.id}`,
-        Colors.MAGENTA
-      );
-      log(
-        `[***] Exchange temporal address: ${transactionData.payinAddress}`,
-        Colors.MAGENTA
-      );
+      log(`[***] Exchange transaction ID: ${transactionData.id}`, Colors.MAGENTA);
+      log(`[***] Exchange temporal address: ${transactionData.payinAddress}`, Colors.MAGENTA);
 
-      const transaction = await MoneroWalletService.sendCoins(
-        transactionData.payinAddress,
-        minimalAmount
-      );
+      const transaction = await MoneroWalletService.sendCoins(transactionData.payinAddress, minimalAmount);
 
       if (transaction) {
-        log(
-          `[***] Exchange transaction hash: ${transaction.hash}`,
-          Colors.MAGENTA
-        );
+        log(`[***] Exchange transaction hash: ${transaction.hash}`, Colors.MAGENTA);
       }
 
       return {
@@ -134,56 +100,38 @@ class CryptoExchangeService {
         moneroTransaction: transaction,
       };
     } catch (error) {
-      log("Error changing XMR to ETH", Colors.RED);
+      log("Error changing BNB to ETH", Colors.RED);
       log(error, Colors.RED);
     }
   };
 
-  public changeETHtoXMR = async () => {
-    log(`[**] Changing ETH to XMR`, Colors.MAGENTA);
+  public changeETHtoBNB = async () => {
+    log(`[**] Changing ETH to BNB`, Colors.MAGENTA);
     try {
-      const isETH_XMRavailable = await this.getAvailableTradePairs();
-      const minimalAmount = await this.minimalExchangeAmount("eth", "xmr");
+      const isETH_BNBavailable = await this.getAvailableTradePairs();
+      const minimalAmount = await this.minimalExchangeAmount("eth", "bnbsc");
 
-      if (!isETH_XMRavailable || minimalAmount === 0) {
-        log(
-          "[***] ETH-XMR pair is not available or minimal amount is 0",
-          Colors.RED
-        );
+      if (!isETH_BNBavailable || minimalAmount === 0) {
+        log("[***] ETH-BNB pair is not available or minimal amount is 0", Colors.RED);
         return;
       }
 
-      const response = await axios.post(
-        `${this.changeNOW_base_url}/transactions/${this.changeNOW_api_key}`,
-        {
-          from: "eth",
-          to: "xmr",
-          amount: minimalAmount,
-          address: this.XMR_wallet,
-          flow: "standard",
-        }
-      );
+      const response = await axios.post(`${this.changeNOW_base_url}/transactions/${this.changeNOW_api_key}`, {
+        from: "eth",
+        to: "bnbbsc",
+        amount: minimalAmount,
+        address: this.BNB_wallet,
+        flow: "standard",
+      });
 
       const transactionData = response.data;
-      log(
-        `[***] Exchange transaction ID: ${transactionData.id}`,
-        Colors.MAGENTA
-      );
-      log(
-        `[***] Exchange temporal address: ${transactionData.payinAddress}`,
-        Colors.MAGENTA
-      );
+      log(`[***] Exchange transaction ID: ${transactionData.id}`, Colors.MAGENTA);
+      log(`[***] Exchange temporal address: ${transactionData.payinAddress}`, Colors.MAGENTA);
 
-      const transaction = await EtheriumWalletService.sendCoins(
-        transactionData.payinAddress,
-        minimalAmount
-      );
+      const transaction = await EtheriumWalletService.sendCoins(transactionData.payinAddress, minimalAmount);
 
       if (transaction) {
-        log(
-          `[***] Exchange transaction hash: ${transaction.hash}`,
-          Colors.MAGENTA
-        );
+        log(`[***] Exchange transaction hash: ${transaction.hash}`, Colors.MAGENTA);
       }
 
       return {
@@ -191,7 +139,7 @@ class CryptoExchangeService {
         ethTransaction: transaction,
       };
     } catch (error) {
-      log("Error changing ETH to XMR", Colors.RED);
+      log("Error changing ETH to BNB", Colors.RED);
       log(error, Colors.RED);
     }
   };

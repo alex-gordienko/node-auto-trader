@@ -30,8 +30,8 @@ class EtheriumWallet {
   };
 
   private startAutoUpdate = async () => {
-    const units = "minutes";
-    const interval = 11;
+    const units = cryptoConfig.autoUpdateWalletBalanceInterval.units;
+    const interval = cryptoConfig.autoUpdateWalletBalanceInterval.interval;
 
     log(
       `[**] Wallet balance would be auto-updated each ${interval} ${units}`,

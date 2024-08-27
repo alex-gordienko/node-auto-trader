@@ -3,19 +3,55 @@ dotenv.config();
 
 const cryptoConfig = {
   // api-keys
-  cryptoCompareApiKey: process.env.CRYPTO_COMPARE_API_KEY || "YOUR_API_KEY",
-  changeNowApiKey: process.env.CHANGE_NOW_API || "YOUR_API_KEY",
+  cryptoCompareApiKey: process.env.CRYPTO_COMPARE_API_KEY || "YOUR_API_KEY", // get currency rates
+  changeNowApiKey: process.env.CHANGE_NOW_API || "YOUR_API_KEY", // exchange currencies
 
   // providers api-keys
-  infuraApiKey: process.env.INFURA_API_KEY || "YOUR_API_KEY",
+  infuraApiKey: process.env.INFURA_API_KEY || "YOUR_API_KEY", // provider for Atomic wallet API
   blockCypherApiKey: process.env.BLOCK_CYPHER_API || "YOUR_API",
 
-  // wallet keys
-  etheriumPrivateKey: process.env.ETHERIUM_PRIVATE_KEY || "YOUR_PRIVATE",
-  moneroPrivateKey: process.env.MONERO_PRIVATE_KEY || "YOUR_PRIVATE",
-  bitcoinPrivateKey: process.env.BITCOIN_PRIVATE_KEY || "YOUR_PRIVATE",
+  // wallet addresses
+  etheriumWallet: process.env.ETHERIUM_WALLET_ADDRESS || "YOUR_WALLET", // wallet for Etherium from Atomic
+  bnbWallet: process.env.BINANCE_WALLET_ADDRESS || "YOUR_WALLET", // wallet for Binance from Atomic
 
-  requestLimitMinutePair: process.env.REQUEST_LIMIT || 10,
+  // wallet keys
+  etheriumPrivateKey: process.env.ETHERIUM_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Etherium from Atomic
+  bnbPrivateKey: process.env.BNB_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Binance from Atomic
+  moneroPrivateKey: process.env.MONERO_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Monero from Atomic
+  bitcoinPrivateKey: process.env.BITCOIN_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Bitcoin from Atomic
+
+  requestLimitMinutePairPrediction: Number(process.env.REQUEST_LIMIT_PREDICTION || 10),
+  requestLimitMinutePairModelTraining: Number(process.env.REQUEST_LIMIT_TRAINING || 2000),
+
+  autoPredictionInterval: {
+    units: (process.env.AUTO_PREDICTION_INTERVAL_UNITS || "minutes") as "minutes" | "hours",
+    interval: Number(process.env.AUTO_PREDICTION_INTERVAL || 10),
+  },
+
+  autoDatasetForMinuteModelUpdateInterval: {
+    units: (process.env.AUTO_DATASET_UPDATE_INTERVAL_UNITS || "minutes") as "hours" | "minutes",
+    interval: Number(process.env.AUTO_DATASET_UPDATE_INTERVAL || 10),
+  },
+
+  autoDatasetForHourModelUpdateInterval: {
+    units: (process.env.AUTO_DATASET_UPDATE_HOUR_INTERVAL_UNITS || "hours") as "hours" | "days",
+    interval: Number(process.env.AUTO_DATASET_UPDATE_HOUR_INTERVAL || 2),
+  },
+
+  autoRetrainingMinuteModelInterval: {
+    units: (process.env.AUTO_RETRAINING_MINUTE_INTERVAL_UNITS || "hours") as "hours" | "days",
+    interval: Number(process.env.AUTO_RETRAINING_MINUTE_INTERVAL || 12),
+  },
+
+  autoRetrainingHourModelInterval: {
+    units: (process.env.AUTO_RETRAINING_HOUR_INTERVAL_UNITS || "days") as "hours" | "days",
+    interval: Number(process.env.AUTO_RETRAINING_HOUR_INTERVAL || 1),
+  },
+
+  autoUpdateWalletBalanceInterval: {
+    units: (process.env.AUTO_UPDATE_WALLET_BALANCE_INTERVAL_UNITS || "minutes") as "minutes" | "hours",
+    interval: Number(process.env.AUTO_UPDATE_WALLET_BALANCE_INTERVAL || 10),
+  },
 
   environment: process.env.ENVIRONMENT || "development",
 };

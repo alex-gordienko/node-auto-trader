@@ -9,7 +9,7 @@ import { log, Colors } from "../utils/colored-console";
 import { format } from "date-fns";
 import CryptoExchangeService from "./CryptoExchange.service";
 import EtheriumWalletService from "./EtheriumWallet.service";
-import MoneroWalletService from "./MoneroWallet.service";
+import BinanceWalletService from "./BinanceWallet.service";
 
 class CryproCompareService {
   private readonly apiKey: string = cryptoConfig.cryptoCompareApiKey;
@@ -43,10 +43,10 @@ class CryproCompareService {
   };
 
   private startAutoUpdate = async () => {
-    const unitsForMinutes = "hours";
-    const intervalForMinutes = 12;
-    const unitsForHours = "hours";
-    const intervalForHours = 24;
+    const unitsForMinutes = cryptoConfig.autoDatasetForMinuteModelUpdateInterval.units;
+    const intervalForMinutes = cryptoConfig.autoDatasetForMinuteModelUpdateInterval.interval;
+    const unitsForHours = cryptoConfig.autoDatasetForHourModelUpdateInterval.units;
+    const intervalForHours = cryptoConfig.autoDatasetForHourModelUpdateInterval.interval;
     log(
       `[**] Training dataset for Minute Model would be auto-updated each ${intervalForMinutes} ${unitsForMinutes}`,
       Colors.WHITE
@@ -59,9 +59,13 @@ class CryproCompareService {
 
     this.pairMinuteTimer = repeatEvent({
       callback: async () => {
-        const tradingMinuteHistory = await this.getMinutePairOHLCV(CryptoBase.XMR, CryptoBase.ETH, 2000);
+        const tradingMinuteHistory = await this.getMinutePairOHLCV(
+          CryptoBase.BNB,
+          CryptoBase.ETH,
+          cryptoConfig.requestLimitMinutePairModelTraining
+        );
 
-        DigitalOceanStorageService.pushTradingHistory("XMR-ETH-minute", tradingMinuteHistory);
+        DigitalOceanStorageService.pushTradingHistory("BNB-ETH-minute", tradingMinuteHistory);
       },
       units: unitsForMinutes,
       interval: intervalForMinutes,
@@ -69,9 +73,13 @@ class CryproCompareService {
 
     this.pairHourTimer = repeatEvent({
       callback: async () => {
-        const tradingHourlyHistory = await this.getHourPairOHLCV(CryptoBase.XMR, CryptoBase.ETH, 2000);
+        const tradingHourlyHistory = await this.getHourPairOHLCV(
+          CryptoBase.BNB,
+          CryptoBase.ETH,
+          cryptoConfig.requestLimitMinutePairModelTraining
+        );
 
-        DigitalOceanStorageService.pushTradingHistory("XMR-ETH-hours", tradingHourlyHistory);
+        DigitalOceanStorageService.pushTradingHistory("BNB-ETH-hours", tradingHourlyHistory);
       },
       units: unitsForHours,
       interval: intervalForHours,
@@ -79,13 +87,17 @@ class CryproCompareService {
   };
 
   private startAutoPrediction = async () => {
-    const units = "minutes";
-    const interval = 10;
+    const units = cryptoConfig.autoPredictionInterval.units;
+    const interval = cryptoConfig.autoPredictionInterval.interval;
     log(`[**] Prediction would be auto-updated each ${interval} ${units}`, Colors.WHITE);
 
     this.predictionTimer = repeatEvent({
       callback: async () => {
-        const testMinuteData = await this.getMinutePairOHLCV(CryptoBase.XMR, CryptoBase.ETH, 10);
+        const testMinuteData = await this.getMinutePairOHLCV(
+          CryptoBase.BNB,
+          CryptoBase.ETH,
+          cryptoConfig.requestLimitMinutePairPrediction
+        );
 
         const predictionByMinute = await TensorflowService.predictNextPrices(testMinuteData);
 
@@ -101,27 +113,29 @@ class CryproCompareService {
         log(`Prediction by Minute model: ${formattedMinuteResult}`, Colors.WHITE);
 
         const ETHBalance = await EtheriumWalletService.getBalance();
-        const XMRBalance = await MoneroWalletService.getBalance();
+        const BNBBalance = await BinanceWalletService.getBalance();
 
         // making swipe due to prediction (THE MOST IMPORTANT PART)
-        if (predictionByMinute.predictionResultsByMinutes[0].action === "Buy") {
-          // The lowest amount of ETH (~$15)
-          if (ETHBalance >= 0.0056) {
-            log(`[**] Buying XMR`, Colors.GREEN);
-            await CryptoExchangeService.changeETHtoXMR();
+        if (cryptoConfig.environment === "production") {
+          if (predictionByMinute.predictionResultsByMinutes[0].action === "Buy") {
+            // The lowest amount of ETH (~$15)
+            if (ETHBalance >= 0.0056) {
+              log(`[**] Buying BNB`, Colors.GREEN);
+              await CryptoExchangeService.changeETHtoBNB();
+            } else {
+              log(`[**] Cannot buy BNB, because ETH amount is too low (${ETHBalance})`, Colors.RED);
+            }
+          } else if (predictionByMinute.predictionResultsByMinutes[0].action === "Sell") {
+            // The lowest amount of BNB (~$15)
+            if (BNBBalance >= 0.027) {
+              log(`[**] Selling BNB`, Colors.GREEN);
+              await CryptoExchangeService.changeBNBtoETH();
+            } else {
+              log(`[**] Cannot buy ETH, because BNB amount is too low (${BNBBalance})`, Colors.RED);
+            }
           } else {
-            log(`[**] Cannot buy XMR, because ETH amount is too low (${ETHBalance})`, Colors.RED);
+            log(`[**] No action`, Colors.YELLOW);
           }
-        } else if (predictionByMinute.predictionResultsByMinutes[0].action === "Sell") {
-          // The lowest amount of XMR (~$15)
-          if (XMRBalance >= 0.093) {
-            log(`[**] Selling XMR`, Colors.GREEN);
-            await CryptoExchangeService.changeXMRtoETH();
-          } else {
-            log(`[**] Cannot buy ETH, because XMR amount is too low (${XMRBalance})`, Colors.RED);
-          }
-        } else {
-          log(`[**] No action`, Colors.YELLOW);
         }
       },
       units,
@@ -132,7 +146,7 @@ class CryproCompareService {
   public getMinutePairOHLCV = async (
     base: CryptoBase,
     to: CryptoBase,
-    limit: number = Number(cryptoConfig.requestLimitMinutePair)
+    limit: number = Number(cryptoConfig.requestLimitMinutePairPrediction)
   ) => {
     const url = `${this.apiUrl}/histominute`;
 
@@ -151,7 +165,7 @@ class CryproCompareService {
   public getHourPairOHLCV = async (
     base: CryptoBase,
     to: CryptoBase,
-    limit: number = Number(cryptoConfig.requestLimitMinutePair)
+    limit: number = Number(cryptoConfig.requestLimitMinutePairModelTraining)
   ) => {
     const url = `${this.apiUrl}/histohour`;
 
@@ -166,6 +180,8 @@ class CryproCompareService {
 
     return response.data;
   };
+
+  private calculatePredictedProfit = async () => {};
 }
 
 export default new CryproCompareService();

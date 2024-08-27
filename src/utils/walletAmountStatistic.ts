@@ -2,7 +2,7 @@ import { ICryproExchangeWalletHistory } from "../types/cryptoExchange.types";
 import { log, Colors } from "./colored-console";
 
 export const walletAmountStatistic = (
-  coin: "ETH" | "XMR",
+  coin: "ETH" | "XMR" | "BNB",
   currentAmount: number,
   walletHistory: ICryproExchangeWalletHistory[]
 ): {statusFromLastTransaction: string, statusFromBeginning: string} => {

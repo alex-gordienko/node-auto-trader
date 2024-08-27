@@ -3,10 +3,7 @@ import axios from "axios";
 import { readdirSync, readFileSync } from "fs";
 
 import config from "../config/digitalOcean.config";
-import {
-  ICyptoCompareData,
-  ICyptoCompareHistoryMinutePair,
-} from "../types/cryptoCompare.types";
+import { ICyptoCompareData, ICyptoCompareHistoryMinutePair } from "../types/cryptoCompare.types";
 import { log, Colors } from "../utils/colored-console";
 import { ICryproExchangeWalletHistory } from "../types/cryptoExchange.types";
 
@@ -27,10 +24,7 @@ class DigitalOceanStorageService {
     log("[*] Initializing Digital Ocean Storage Service", Colors.BLUE);
   }
 
-  private uploadFile = async (
-    bucketName: string,
-    input: aws.S3.PutObjectRequest
-  ) => {
+  private uploadFile = async (bucketName: string, input: aws.S3.PutObjectRequest) => {
     try {
       await this.s3.putObject(input, (err, data) => {
         if (err) {
@@ -51,10 +45,7 @@ class DigitalOceanStorageService {
     }
   };
 
-  private getSavedFile = async <T>(
-    name: string,
-    bucketName: string
-  ): Promise<Map<number, T> | null> => {
+  private getSavedFile = async <T>(name: string, bucketName: string): Promise<Map<number, T> | null> => {
     try {
       const splittedEndpoint = config.endpoint.split("//");
       const fileURL = `${splittedEndpoint[0]}//${bucketName}.${splittedEndpoint[1]}/${name}`;
@@ -71,21 +62,13 @@ class DigitalOceanStorageService {
     }
   };
 
-  public pushTradingHistory = async (
-    name: string,
-    data: ICyptoCompareHistoryMinutePair
-  ): Promise<string | null> => {
+  public pushTradingHistory = async (name: string, data: ICyptoCompareHistoryMinutePair): Promise<string | null> => {
     const bucketName = config.bucket;
     const fileName = name + "-trading-history.json";
 
-    const newDataMap = new Map<number, ICyptoCompareData>(
-      data.Data.Data.map((d) => [d.time, d])
-    );
+    const newDataMap = new Map<number, ICyptoCompareData>(data.Data.Data.map((d) => [d.time, d]));
 
-    let savedDataMap = await this.getSavedFile<ICyptoCompareData>(
-      fileName,
-      bucketName
-    );
+    let savedDataMap = await this.getSavedFile<ICyptoCompareData>(fileName, bucketName);
 
     let newRowsCount = 0;
     if (savedDataMap) {
@@ -115,15 +98,12 @@ class DigitalOceanStorageService {
   };
 
   public getTradingHistory = async (
-    historyName: "XMR-ETH-minute" | "XMR-ETH-hours"
+    historyName: "BNB-ETH-minute" | "BNB-ETH-hours" | "XMR-ETH-minute" | "XMR-ETH-hours"
   ): Promise<ICyptoCompareData[]> => {
     const bucketName = config.bucket;
     const fileName = `${historyName}-trading-history.json`;
 
-    const result = await this.getSavedFile<ICyptoCompareData>(
-      fileName,
-      bucketName
-    );
+    const result = await this.getSavedFile<ICyptoCompareData>(fileName, bucketName);
 
     if (!result) {
       return [];
@@ -133,16 +113,13 @@ class DigitalOceanStorageService {
   };
 
   public pushWalletBalanceHistory = async (
-    coin: "XMR" | "ETH",
+    coin: "BNB" | "XMR" | "ETH",
     data: ICryproExchangeWalletHistory
   ): Promise<string | null> => {
     const bucketName = config.bucket;
     const fileName = `${coin}-wallet-balance-history.json`;
 
-    let savedDataMap = await this.getSavedFile<ICryproExchangeWalletHistory>(
-      fileName,
-      bucketName
-    );
+    let savedDataMap = await this.getSavedFile<ICryproExchangeWalletHistory>(fileName, bucketName);
 
     if (!savedDataMap) {
       log("[**] No saved file found", Colors.BLUE);
@@ -160,29 +137,22 @@ class DigitalOceanStorageService {
     };
 
     return this.uploadFile(bucketName, input);
-  }
+  };
 
-  public getWalletBalanceHistory = async (coin: "XMR" | "ETH"): Promise<ICryproExchangeWalletHistory[]> => { 
+  public getWalletBalanceHistory = async (coin: "BNB" | "XMR" | "ETH"): Promise<ICryproExchangeWalletHistory[]> => {
     const bucketName = config.bucket;
     const fileName = `${coin}-wallet-balance-history.json`;
 
-    const result = await this.getSavedFile<ICryproExchangeWalletHistory>(
-      fileName,
-      bucketName
-    );
+    const result = await this.getSavedFile<ICryproExchangeWalletHistory>(fileName, bucketName);
 
     if (!result) {
       return [];
     }
 
     return Array.from(result.values());
-  }
+  };
 
-  public saveModel = async (
-    localPath: string,
-    cloudPath: string,
-    modelType: "minutePair" | "hourlyPair"
-  ) => {
+  public saveModel = async (localPath: string, cloudPath: string, modelType: "minutePair" | "hourlyPair") => {
     const files = readdirSync(localPath);
     const bucketName = config.bucket;
 
