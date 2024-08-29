@@ -6,6 +6,7 @@ import config from "../config/digitalOcean.config";
 import { ICyptoCompareData, ICyptoCompareHistoryMinutePair } from "../types/cryptoCompare.types";
 import { log, Colors } from "../utils/colored-console";
 import { ICryproExchangeWalletHistory } from "../types/cryptoExchange.types";
+import { CryptoBase } from "../types/basic.types";
 
 class DigitalOceanStorageService {
   public spacesEndpoint: aws.Endpoint;
@@ -98,7 +99,7 @@ class DigitalOceanStorageService {
   };
 
   public getTradingHistory = async (
-    historyName: "BNB-ETH-minute" | "BNB-ETH-hours" | "XMR-ETH-minute" | "XMR-ETH-hours"
+    historyName: "POLY-ETH-minute" | "POLY-ETH-hours"
   ): Promise<ICyptoCompareData[]> => {
     const bucketName = config.bucket;
     const fileName = `${historyName}-trading-history.json`;
@@ -113,7 +114,7 @@ class DigitalOceanStorageService {
   };
 
   public pushWalletBalanceHistory = async (
-    coin: "BNB" | "XMR" | "ETH",
+    coin: CryptoBase,
     data: ICryproExchangeWalletHistory
   ): Promise<string | null> => {
     const bucketName = config.bucket;
@@ -139,7 +140,7 @@ class DigitalOceanStorageService {
     return this.uploadFile(bucketName, input);
   };
 
-  public getWalletBalanceHistory = async (coin: "BNB" | "XMR" | "ETH"): Promise<ICryproExchangeWalletHistory[]> => {
+  public getWalletBalanceHistory = async (coin: CryptoBase): Promise<ICryproExchangeWalletHistory[]> => {
     const bucketName = config.bucket;
     const fileName = `${coin}-wallet-balance-history.json`;
 

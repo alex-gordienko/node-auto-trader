@@ -12,13 +12,11 @@ const cryptoConfig = {
 
   // wallet addresses
   etheriumWallet: process.env.ETHERIUM_WALLET_ADDRESS || "YOUR_WALLET", // wallet for Etherium from Atomic
-  bnbWallet: process.env.BINANCE_WALLET_ADDRESS || "YOUR_WALLET", // wallet for Binance from Atomic
+  polygonWallet: process.env.POLYGON_WALLET_ADDRESS || "YOUR_WALLET", // wallet for Binance from Atomic
 
   // wallet keys
   etheriumPrivateKey: process.env.ETHERIUM_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Etherium from Atomic
-  bnbPrivateKey: process.env.BNB_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Binance from Atomic
-  moneroPrivateKey: process.env.MONERO_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Monero from Atomic
-  bitcoinPrivateKey: process.env.BITCOIN_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Bitcoin from Atomic
+  polyPrivateKey: process.env.POLYGON_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Binance from Atomic
 
   requestLimitMinutePairPrediction: Number(process.env.REQUEST_LIMIT_PREDICTION || 10),
   requestLimitMinutePairModelTraining: Number(process.env.REQUEST_LIMIT_TRAINING || 2000),

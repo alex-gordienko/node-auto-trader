@@ -4,20 +4,21 @@ import repeatEvent from "../utils/timer";
 import DigitalOceanStorageService from "./DigitalOcean.storage.service";
 import { walletAmountStatistic } from "../utils/walletAmountStatistic";
 import cryptoConfig from "../config/crypto.config";
+import { CryptoBase } from "../types/basic.types";
 
-class BinanceWalletService {
+class PolygonWalletService {
   private readonly infuraAPIkey = cryptoConfig.infuraApiKey;
-  private readonly binancePrivateKey = cryptoConfig.bnbPrivateKey;
+  private readonly polygonPrivateKey = cryptoConfig.polyPrivateKey;
 
   private wallet: Ethers.ethers.Wallet;
   private walletTimer: NodeJS.Timeout | null = null;
 
   constructor() {
-    log("[*] Initializing Binance Wallet Service", Colors.YELLOW);
+    log("[*] Initializing Tron Wallet Service", Colors.YELLOW);
 
-    const provider = new Ethers.JsonRpcProvider(`https://bsc-mainnet.infura.io/v3/${this.infuraAPIkey}`);
+    const provider = new Ethers.JsonRpcProvider(`https://polygon-mainnet.infura.io/v3/${this.infuraAPIkey}`);
 
-    const wallet = new Ethers.ethers.Wallet(this.binancePrivateKey, provider);
+    const wallet = new Ethers.ethers.Wallet(this.polygonPrivateKey, provider);
 
     this.wallet = wallet;
 
@@ -25,7 +26,7 @@ class BinanceWalletService {
     this.getBalance();
   }
 
-  private static convertBigIntToBNB = (balance: bigint) => Ethers.ethers.formatEther(balance);
+  private static convertBigIntToPOLY = (balance: bigint) => Ethers.ethers.formatEther(balance);
 
   public stopWalletTimer = () => {
     if (this.walletTimer) {
@@ -42,15 +43,15 @@ class BinanceWalletService {
     this.walletTimer = repeatEvent({
       callback: async () => {
         // get history for statistics
-        const walletHistory = await DigitalOceanStorageService.getWalletBalanceHistory("BNB");
+        const walletHistory = await DigitalOceanStorageService.getWalletBalanceHistory(CryptoBase.POLY);
 
         // get current balance
         const balance = await this.getBalance();
 
-        walletAmountStatistic("BNB", balance, walletHistory);
+        walletAmountStatistic(CryptoBase.POLY, balance, walletHistory);
 
         // push new value to DigitalOcean
-        await DigitalOceanStorageService.pushWalletBalanceHistory("BNB", {
+        await DigitalOceanStorageService.pushWalletBalanceHistory(CryptoBase.POLY, {
           amount: balance,
           timestamp: new Date().getTime(),
         });
@@ -65,7 +66,8 @@ class BinanceWalletService {
       if (this.wallet.provider) {
         const balance = await this.wallet.provider?.getBalance(this.wallet.address);
 
-        return Number(BinanceWalletService.convertBigIntToBNB(balance));
+        return Number(PolygonWalletService.convertBigIntToPOLY(balance));
+
       }
       return 0;
     } catch (error) {
@@ -92,4 +94,4 @@ class BinanceWalletService {
   };
 }
 
-export default new BinanceWalletService();
+export default new PolygonWalletService();

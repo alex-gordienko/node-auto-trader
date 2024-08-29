@@ -9,7 +9,7 @@ import { log, Colors } from "../utils/colored-console";
 import { format } from "date-fns";
 import CryptoExchangeService from "./CryptoExchange.service";
 import EtheriumWalletService from "./EtheriumWallet.service";
-import BinanceWalletService from "./BinanceWallet.service";
+import TronWalletService from "./PolygonWallet.service";
 
 class CryproCompareService {
   private readonly apiKey: string = cryptoConfig.cryptoCompareApiKey;
@@ -60,12 +60,12 @@ class CryproCompareService {
     this.pairMinuteTimer = repeatEvent({
       callback: async () => {
         const tradingMinuteHistory = await this.getMinutePairOHLCV(
-          CryptoBase.BNB,
+          CryptoBase.POLY,
           CryptoBase.ETH,
           cryptoConfig.requestLimitMinutePairModelTraining
         );
 
-        DigitalOceanStorageService.pushTradingHistory("BNB-ETH-minute", tradingMinuteHistory);
+        DigitalOceanStorageService.pushTradingHistory("POLY-ETH-minute", tradingMinuteHistory);
       },
       units: unitsForMinutes,
       interval: intervalForMinutes,
@@ -74,12 +74,12 @@ class CryproCompareService {
     this.pairHourTimer = repeatEvent({
       callback: async () => {
         const tradingHourlyHistory = await this.getHourPairOHLCV(
-          CryptoBase.BNB,
+          CryptoBase.POLY,
           CryptoBase.ETH,
           cryptoConfig.requestLimitMinutePairModelTraining
         );
 
-        DigitalOceanStorageService.pushTradingHistory("BNB-ETH-hours", tradingHourlyHistory);
+        DigitalOceanStorageService.pushTradingHistory("POLY-ETH-hours", tradingHourlyHistory);
       },
       units: unitsForHours,
       interval: intervalForHours,
@@ -94,7 +94,7 @@ class CryproCompareService {
     this.predictionTimer = repeatEvent({
       callback: async () => {
         const testMinuteData = await this.getMinutePairOHLCV(
-          CryptoBase.BNB,
+          CryptoBase.POLY,
           CryptoBase.ETH,
           cryptoConfig.requestLimitMinutePairPrediction
         );
@@ -113,25 +113,25 @@ class CryproCompareService {
         log(`Prediction by Minute model: ${formattedMinuteResult}`, Colors.WHITE);
 
         const ETHBalance = await EtheriumWalletService.getBalance();
-        const BNBBalance = await BinanceWalletService.getBalance();
+        const POLYBalance = await TronWalletService.getBalance();
 
         // making swipe due to prediction (THE MOST IMPORTANT PART)
         if (cryptoConfig.environment === "production") {
           if (predictionByMinute.predictionResultsByMinutes[0].action === "Buy") {
             // The lowest amount of ETH (~$15)
             if (ETHBalance >= 0.0056) {
-              log(`[**] Buying BNB`, Colors.GREEN);
-              await CryptoExchangeService.changeETHtoBNB();
+              log(`[**] Buying POLY`, Colors.GREEN);
+              await CryptoExchangeService.changeETHtoPOLY();
             } else {
-              log(`[**] Cannot buy BNB, because ETH amount is too low (${ETHBalance})`, Colors.RED);
+              log(`[**] Cannot buy POLY, because ETH amount is too low (${ETHBalance})`, Colors.RED);
             }
           } else if (predictionByMinute.predictionResultsByMinutes[0].action === "Sell") {
-            // The lowest amount of BNB (~$15)
-            if (BNBBalance >= 0.027) {
-              log(`[**] Selling BNB`, Colors.GREEN);
-              await CryptoExchangeService.changeBNBtoETH();
+            // The lowest amount of POLY (~$15)
+            if ((POLYBalance >= 33.8)) {
+              log(`[**] Selling POLY`, Colors.GREEN);
+              await CryptoExchangeService.changePOLYtoETH();
             } else {
-              log(`[**] Cannot buy ETH, because BNB amount is too low (${BNBBalance})`, Colors.RED);
+              log(`[**] Cannot buy ETH, because POLY amount is too low (${POLYBalance})`, Colors.RED);
             }
           } else {
             log(`[**] No action`, Colors.YELLOW);

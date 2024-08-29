@@ -29,7 +29,29 @@ export enum CryptoBase {
 	ETH = "ETH",
 	USDT = "USDT",
 	BNB = "BNB",
+	TRX = "TRX",
+	POLY = "MATIC",
 	XMR = "XMR",
+}
+
+export enum CryptoExchangeCoins {
+	ETH = "eth",
+	XMR = "xmr",
+	BNB = "bnb",
+	BNB_BSC = "bnbbsc",
+	TRX = "trx",
+	POLY = "matic",
+}
+
+export enum CryptoExchangePairs {
+	ETH_XMR = "eth_xmr",
+	XMR_ETH = "xmr_eth",
+	BNB_BSC_ETH = "bnbbsc_eth",
+	ETH_BNB_BSC = "eth_bnbbsc",
+	ETH_TRX = "eth_trx",
+	TRX_ETH = "trx_eth",
+	ETH_POLY = "eth_matic",
+	POLY_ETH = "matic_eth",
 }
 
 export interface IWSconfig {

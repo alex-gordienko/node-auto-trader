@@ -1,20 +1,21 @@
 import axios from "axios";
 import cryptoConfig from "../config/crypto.config";
 import { log, Colors } from "../utils/colored-console";
-import MoneroWalletService from "./BinanceWallet.service";
+import MoneroWalletService from "./PolygonWallet.service";
 import EtheriumWalletService from "./EtheriumWallet.service";
+import { CryptoExchangeCoins, CryptoExchangePairs } from "../types/basic.types";
 
 class CryptoExchangeService {
   private readonly changeNOW_base_url: string = "https://api.changenow.io/v1";
-  private readonly BNB_wallet: string = cryptoConfig.bnbWallet;
+  private readonly POLY_wallet: string = cryptoConfig.polygonWallet;
   private readonly ETH_wallet: string = cryptoConfig.etheriumWallet;
   private readonly changeNOW_api_key: string = cryptoConfig.changeNowApiKey;
 
   constructor() {
     log("[*] Initializing Crypto Exchange Service", Colors.MAGENTA);
     this.getAvailableTradePairs();
-    this.minimalExchangeAmount("bnbbsc", "eth");
-    this.minimalExchangeAmount("eth", "bnbbsc");
+    this.minimalExchangeAmount(CryptoExchangeCoins.POLY, CryptoExchangeCoins.ETH);
+    this.minimalExchangeAmount(CryptoExchangeCoins.ETH, CryptoExchangeCoins.POLY);
   }
 
   public getAvailableTradePairs = async (): Promise<boolean> => {
@@ -25,21 +26,27 @@ class CryptoExchangeService {
         },
       });
 
-      const isBNBETHAvailable = response.data.find((pair: string) => pair === "bnbbsc_eth");
+      const trxCurrencies = response.data.filter(
+        (pair: string) => pair.includes(CryptoExchangeCoins.POLY) && pair.includes(CryptoExchangeCoins.ETH)
+      );
 
-      const isETHBNBAvailable = response.data.find((pair: string) => pair === "eth_bnbbsc");
+      log(`[**] Available trade pairs: ${trxCurrencies.join(", ")}`, Colors.MAGENTA);
 
-      if (!isBNBETHAvailable) {
-        log("BNB-ETH pair is not available", Colors.RED);
+      const isPOLYETHAvailable = response.data.find((pair: string) => pair === CryptoExchangePairs.POLY_ETH);
+
+      const isETHPOLYAvailable = response.data.find((pair: string) => pair === CryptoExchangePairs.ETH_POLY);
+
+      if (!isPOLYETHAvailable) {
+        log("POLY-ETH pair is not available", Colors.RED);
         return false;
       }
 
-      if (!isETHBNBAvailable) {
-        log("ETH-BNB pair is not available", Colors.RED);
+      if (!isETHPOLYAvailable) {
+        log("ETH-POLY pair is not available", Colors.RED);
         return false;
       }
 
-      log("[**] BNB-ETH and ETH-BNB tradings are available", Colors.MAGENTA);
+      log("[**] POLY-ETH and ETH-POLY tradings are available", Colors.MAGENTA);
       return true;
     } catch (error) {
       log("Error getting available trade pairs", Colors.RED);
@@ -48,7 +55,7 @@ class CryptoExchangeService {
     }
   };
 
-  public minimalExchangeAmount = async (from: "bnbbsc" | "eth", to: "bnbbsc" | "eth"): Promise<number> => {
+  public minimalExchangeAmount = async (from: CryptoExchangeCoins, to: CryptoExchangeCoins): Promise<number> => {
     try {
       const response = await axios.get(`${this.changeNOW_base_url}/min-amount/${from}_${to}`, {
         headers: {
@@ -66,20 +73,20 @@ class CryptoExchangeService {
     }
   };
 
-  public changeBNBtoETH = async () => {
-    log(`[**] Changing BNB to ETH`, Colors.MAGENTA);
+  public changePOLYtoETH = async () => {
+    log(`[**] Changing POLY to ETH`, Colors.MAGENTA);
     try {
-      const isBNB_ETHAvailable = await this.getAvailableTradePairs();
-      const minimalAmount = await this.minimalExchangeAmount("bnbbsc", "eth");
+      const isPOLY_ETHAvailable = await this.getAvailableTradePairs();
+      const minimalAmount = await this.minimalExchangeAmount(CryptoExchangeCoins.POLY, CryptoExchangeCoins.ETH);
 
-      if (!isBNB_ETHAvailable || minimalAmount === 0) {
-        log("[***] BNB-ETH pair is not available or minimal amount is 0", Colors.RED);
+      if (!isPOLY_ETHAvailable || minimalAmount === 0) {
+        log("[***] POLY-ETH pair is not available or minimal amount is 0", Colors.RED);
         return;
       }
 
       const response = await axios.post(`${this.changeNOW_base_url}/transactions/${this.changeNOW_api_key}`, {
-        from: "bnbbsc",
-        to: "eth",
+        from: CryptoExchangeCoins.POLY,
+        to: CryptoExchangeCoins.ETH,
         amount: minimalAmount,
         address: this.ETH_wallet,
         flow: "standard",
@@ -100,27 +107,27 @@ class CryptoExchangeService {
         moneroTransaction: transaction,
       };
     } catch (error) {
-      log("Error changing BNB to ETH", Colors.RED);
+      log("Error changing POLY to ETH", Colors.RED);
       log(error, Colors.RED);
     }
   };
 
-  public changeETHtoBNB = async () => {
-    log(`[**] Changing ETH to BNB`, Colors.MAGENTA);
+  public changeETHtoPOLY = async () => {
+    log(`[**] Changing ETH to POLY`, Colors.MAGENTA);
     try {
-      const isETH_BNBavailable = await this.getAvailableTradePairs();
-      const minimalAmount = await this.minimalExchangeAmount("eth", "bnbbsc");
+      const isETH_POLYavailable = await this.getAvailableTradePairs();
+      const minimalAmount = await this.minimalExchangeAmount(CryptoExchangeCoins.ETH, CryptoExchangeCoins.POLY);
 
-      if (!isETH_BNBavailable || minimalAmount === 0) {
-        log("[***] ETH-BNB pair is not available or minimal amount is 0", Colors.RED);
+      if (!isETH_POLYavailable || minimalAmount === 0) {
+        log("[***] ETH-POLY pair is not available or minimal amount is 0", Colors.RED);
         return;
       }
 
       const response = await axios.post(`${this.changeNOW_base_url}/transactions/${this.changeNOW_api_key}`, {
-        from: "eth",
-        to: "bnbbsc",
+        from: CryptoExchangeCoins.ETH,
+        to: CryptoExchangeCoins.POLY,
         amount: minimalAmount,
-        address: this.BNB_wallet,
+        address: this.POLY_wallet,
         flow: "standard",
       });
 
@@ -139,7 +146,7 @@ class CryptoExchangeService {
         ethTransaction: transaction,
       };
     } catch (error) {
-      log("Error changing ETH to BNB", Colors.RED);
+      log("Error changing ETH to POLY", Colors.RED);
       log(error, Colors.RED);
     }
   };
