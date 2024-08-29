@@ -21,6 +21,7 @@ class EtheriumWallet {
 
     this.wallet = wallet;
     this.startAutoUpdate();
+    this.getBalance();
   }
 
   public stopWalletTimer = () => {

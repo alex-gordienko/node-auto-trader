@@ -5,14 +5,11 @@ export const walletAmountStatistic = (
   coin: "ETH" | "XMR" | "BNB",
   currentAmount: number,
   walletHistory: ICryproExchangeWalletHistory[]
-): {statusFromLastTransaction: string, statusFromBeginning: string} => {
-  let message = `You have ${currentAmount} ${coin} in your wallet. `;
-  let message2 = `You have ${currentAmount} ${coin} in your wallet. `;
+): { statusFromLastTransaction: string } => {
+  let message = Colors.GREEN + `You have ${currentAmount} ${coin} in your wallet. `;
   if (walletHistory.length === 0) {
-    message += "No history found";
-    message2 = "No history found";
-    log(message, Colors.YELLOW);
-    return {statusFromLastTransaction: message, statusFromBeginning: message2 };
+    message += Colors.RED + "No history found";
+    return { statusFromLastTransaction: message };
   }
 
   const lastAmount = walletHistory[walletHistory.length - 1].amount;
@@ -20,30 +17,22 @@ export const walletAmountStatistic = (
   const diff = currentAmount - lastAmount;
   const diffSinceStart = currentAmount - firstAmount;
   if (diff > 0) {
-    message += `You have gained ${diff} coins since your last transaction`;
-    log(message, Colors.GREEN);
+    message += Colors.GREEN + `(+ ${diff}) since last transaction. `;
   } else if (diff < 0) {
-    message += `You have lost ${Math.abs(
-      diff
-    )} coins since your last transaction`;
-    log(message, Colors.RED);
+    message += Colors.RED + `(- ${Math.abs(diff)}) since last transaction. `;
   } else {
-    message += `You have the same amount of coins as your last transaction`;
-    log(message, Colors.YELLOW);
+    message += Colors.YELLOW + ` (0) since last transaction. `;
   }
 
   if (diffSinceStart > 0) {
-    message2 += `You have gained ${diffSinceStart} coins since the beginning`;
-    log(message2, Colors.GREEN);
+    message += Colors.GREEN + `(+ ${diffSinceStart}) since beginning. `;
   } else if (diffSinceStart < 0) {
-    message2 += `You have lost ${Math.abs(
-      diffSinceStart
-    )} coins since the beginning`;
-    log(message2, Colors.RED);
+    message += Colors.RED + `(- ${Math.abs(diffSinceStart)}) since the beginning. `;
   } else {
-    message2 += `You have the same amount of coins as the beginning`;
-    log(message2, Colors.YELLOW);
+    message += Colors.YELLOW + `(0) since beginning. `;
   }
 
-  return {statusFromLastTransaction: message, statusFromBeginning: message2 };
+  log(message);
+
+  return { statusFromLastTransaction: message };
 };

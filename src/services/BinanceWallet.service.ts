@@ -15,19 +15,17 @@ class BinanceWalletService {
   constructor() {
     log("[*] Initializing Binance Wallet Service", Colors.YELLOW);
 
-    const provider = new Ethers.JsonRpcProvider(
-      `https://mainnet.infura.io/v3/${this.infuraAPIkey}`
-    );
+    const provider = new Ethers.JsonRpcProvider(`https://bsc-mainnet.infura.io/v3/${this.infuraAPIkey}`);
 
     const wallet = new Ethers.ethers.Wallet(this.binancePrivateKey, provider);
 
     this.wallet = wallet;
 
     this.startAutoUpdate();
+    this.getBalance();
   }
 
-  private static convertBigIntToBNB = (balance: bigint) =>
-    Ethers.ethers.formatEther(balance);
+  private static convertBigIntToBNB = (balance: bigint) => Ethers.ethers.formatEther(balance);
 
   public stopWalletTimer = () => {
     if (this.walletTimer) {
@@ -39,16 +37,12 @@ class BinanceWalletService {
     const units = cryptoConfig.autoUpdateWalletBalanceInterval.units;
     const interval = cryptoConfig.autoUpdateWalletBalanceInterval.interval;
 
-    log(
-      `[**] Wallet balance would be auto-updated each ${interval} ${units}`,
-      Colors.YELLOW
-    );
+    log(`[**] Wallet balance would be auto-updated each ${interval} ${units}`, Colors.YELLOW);
 
     this.walletTimer = repeatEvent({
       callback: async () => {
         // get history for statistics
-        const walletHistory =
-          await DigitalOceanStorageService.getWalletBalanceHistory("BNB");
+        const walletHistory = await DigitalOceanStorageService.getWalletBalanceHistory("BNB");
 
         // get current balance
         const balance = await this.getBalance();
@@ -80,10 +74,7 @@ class BinanceWalletService {
     }
   };
 
-  public sendCoins = async (
-    walletTo: string,
-    amount: number
-  ): Promise<Ethers.ethers.TransactionResponse | null> => {
+  public sendCoins = async (walletTo: string, amount: number): Promise<Ethers.ethers.TransactionResponse | null> => {
     try {
       const tx = await this.wallet.sendTransaction({
         to: walletTo,
@@ -91,10 +82,7 @@ class BinanceWalletService {
       });
 
       await tx.wait();
-      log(
-        `[***] Transaction successfully sent. TX hash: ${tx.hash}`,
-        Colors.CYAN
-      );
+      log(`[***] Transaction successfully sent. TX hash: ${tx.hash}`, Colors.CYAN);
       return tx;
     } catch (error) {
       log(`Error while sending coins`, Colors.RED);
