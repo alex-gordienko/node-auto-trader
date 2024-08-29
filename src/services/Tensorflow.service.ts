@@ -149,7 +149,7 @@ class TensorflowAI {
   private saveModel = async (modelType: "minutePair" | "hourlyPair") => {
     if (modelType === "minutePair") {
       fse.ensureDirSync(this.minuteModelLocalDir);
-      // await this.minuteModel?.save(`${this.baseURL}/${this.hourlyModelDir}`);
+      await this.minuteModel?.save('file://' + this.minuteModelLocalDir);
       await DigitalOceanStorageService.saveModel(
         this.minuteModelLocalDir,
         this.minuteModelCloudDir,
@@ -158,7 +158,7 @@ class TensorflowAI {
       log("[**] Minute Model saved to file", Colors.GREEN);
     } else if (modelType === "hourlyPair") {
       fse.ensureDirSync(this.hourlyModelLocalDir);
-      // await this.hourlyModel?.save(`${this.baseURL}/${this.hourlyModelDir}`);
+      await this.hourlyModel?.save("file://" + this.hourlyModelLocalDir);
       await DigitalOceanStorageService.saveModel(
         this.hourlyModelLocalDir,
         this.hourlyModelCloudDir,
