@@ -48,7 +48,7 @@ class CryptoExchangeService {
     }
   };
 
-  public minimalExchangeAmount = async (from: string, to: string): Promise<number> => {
+  public minimalExchangeAmount = async (from: "bnbbsc" | "eth", to: "bnbbsc" | "eth"): Promise<number> => {
     try {
       const response = await axios.get(`${this.changeNOW_base_url}/min-amount/${from}_${to}`, {
         headers: {
@@ -109,7 +109,7 @@ class CryptoExchangeService {
     log(`[**] Changing ETH to BNB`, Colors.MAGENTA);
     try {
       const isETH_BNBavailable = await this.getAvailableTradePairs();
-      const minimalAmount = await this.minimalExchangeAmount("eth", "bnbsc");
+      const minimalAmount = await this.minimalExchangeAmount("eth", "bnbbsc");
 
       if (!isETH_BNBavailable || minimalAmount === 0) {
         log("[***] ETH-BNB pair is not available or minimal amount is 0", Colors.RED);
