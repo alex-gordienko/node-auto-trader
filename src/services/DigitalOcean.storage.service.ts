@@ -178,6 +178,7 @@ class DigitalOceanStorageService {
   };
 
   public pushTransactionsHistory = async (props: TransactionHistoryProps): Promise<string | null> => {
+    try{
     const bucketName = config.bucket;
     const fileName = `${props.coins[0]}-${props.coins[1]}-transactions-history.json`;
 
@@ -193,7 +194,7 @@ class DigitalOceanStorageService {
     const transactionHash = ethToWave ? props.transactionResponse?.hash : props.transactionResponse?.id;
 
     const networkFee = ethToWave
-      ? Number(EtheriumWalletService.convertBigIntToETH(props.transactionResponse?.gasPrice || BigInt(0)))
+      ? await EtheriumWalletService.getTransactionFee(transactionHash || "")
       : WavesWalletService.convertLongToWaves(props.transactionResponse?.fee)
     
     const transactionHistory: ICryptoExchangeTransactionsHistory = {
@@ -225,7 +226,12 @@ class DigitalOceanStorageService {
       ACL: "public-read",
     };
 
-    return this.uploadFile(bucketName, input);
+      return this.uploadFile(bucketName, input);
+    } catch (error) {
+      log('Error while pushing transaction history', Colors.RED);
+      log(error, Colors.RED);
+      return null;
+    }
   };
 
   public getTransactionsHistory = async (coins: CryptoBase[]): Promise<ICryptoExchangeTransactionsHistory[]> => {

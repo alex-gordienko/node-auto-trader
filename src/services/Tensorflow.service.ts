@@ -278,7 +278,7 @@ class TensorflowAI {
       const actualValue = outputs[outputs.length - 1]; // Last known price
 
       // Determine buy/sell command based on a simple strategy
-      const priceChangeThreshold = 0.0005; // 0.05% threshold
+      const priceChangeThreshold = 0.001; // 0.01% threshold
       let action: string;
       if ((predictedValue - actualValue) / actualValue > priceChangeThreshold) {
         action = "Buy";
