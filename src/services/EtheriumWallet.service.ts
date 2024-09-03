@@ -61,7 +61,7 @@ class EtheriumWallet {
     });
   };
 
-  private static convertBigIntToETH = (balance: bigint) =>
+  public convertBigIntToETH = (balance: bigint) =>
     Ethers.ethers.formatEther(balance);
 
   public getAddress(): string {
@@ -98,11 +98,11 @@ class EtheriumWallet {
       if (this.wallet.provider) {
         const balance = await this.wallet.provider?.getBalance(this.wallet.address);
 
-        return Number(EtheriumWallet.convertBigIntToETH(balance));
+        return Number(this.convertBigIntToETH(balance));
       }
       return 0;
     } catch (error) {
-      log(`Error while get balance: ${error}`, Colors.RED);
+      log(`Error while get ETH balance: ${error}`, Colors.RED);
       return 0;
     }
   };

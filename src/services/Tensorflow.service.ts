@@ -61,7 +61,7 @@ class TensorflowAI {
     this.pairMinuteTimer = repeatEvent({
       callback: async () => {
         const trainDataByMinutes =
-          await DigitalOceanStorageService.getTradingHistory("POLY-ETH-minute");
+          await DigitalOceanStorageService.getTradingHistory("WAVES-ETH-minute");
 
         this.trainModel("minutePair", trainDataByMinutes)
       },
@@ -72,7 +72,7 @@ class TensorflowAI {
     this.pairHourTimer = repeatEvent({
       callback: async () => {
         const trainDataByHours =
-          await DigitalOceanStorageService.getTradingHistory("POLY-ETH-hours");
+          await DigitalOceanStorageService.getTradingHistory("WAVES-ETH-hours");
         this.trainModel("hourlyPair", trainDataByHours)
       },
       units: unitsForHours,

@@ -8,7 +8,7 @@ import cryptoConfig from "./src/config/crypto.config";
 import "./src/services/Tensorflow.service";
 import "./src/services/CryproCompare.service";
 import "./src/services/CryptoExchange.service";
-import "./src/services/PolygonWallet.service";
+import "./src/services/WavesWallet.service";
 import "./src/services/EtheriumWallet.service";
 import "./src/services/DigitalOcean.storage.service";
 import { log, Colors } from "./src/utils/colored-console";

@@ -19,11 +19,9 @@ export default () => {
   });
 
   router.get(routes.REST.LEARN_TENSORFLOW, async (req, res) => {
-    const trainDataByMinutes = await DigitalOceanStorageService.getTradingHistory("POLY-ETH-minute");
-    const trainDataByHours = await DigitalOceanStorageService.getTradingHistory("POLY-ETH-hours");
+    const trainDataByMinutes = await DigitalOceanStorageService.getTradingHistory("WAVES-ETH-minute");
 
     TensorflowService.trainModel("minutePair", trainDataByMinutes);
-    TensorflowService.trainModel("hourlyPair", trainDataByHours);
 
     res.json({
       status: "ok",
@@ -32,7 +30,7 @@ export default () => {
   });
 
   router.get(routes.REST.GET_PREDICTION, async (req, res) => {
-    const testHourData = await CryproCompareService.getHourPairOHLCV(CryptoBase.POLY, CryptoBase.ETH, 5);
+    const testHourData = await CryproCompareService.getHourPairOHLCV(CryptoBase.WAVES, CryptoBase.ETH, 5);
     const predictionByHour = await TensorflowService.predictNextPrices(testHourData);
 
     res.json({
@@ -43,17 +41,17 @@ export default () => {
   });
 
   router.get(routes.REST.SAVE_HISTORY, async (req, res) => {
-    const trainDataByMinutes = await CryproCompareService.getMinutePairOHLCV(CryptoBase.POLY, CryptoBase.ETH, 2000);
+    const trainDataByMinutes = await CryproCompareService.getMinutePairOHLCV(CryptoBase.WAVES, CryptoBase.ETH, 2000);
 
-    const trainDataByHours = await CryproCompareService.getHourPairOHLCV(CryptoBase.POLY, CryptoBase.ETH, 2000);
+    const trainDataByHours = await CryproCompareService.getHourPairOHLCV(CryptoBase.WAVES, CryptoBase.ETH, 2000);
 
     const tradingMinuteHistoryLink = await DigitalOceanStorageService.pushTradingHistory(
-      "POLY-ETH-minute",
+      "WAVES-ETH-minute",
       trainDataByMinutes
     );
 
     const tradingHourlyHistoryLink = await DigitalOceanStorageService.pushTradingHistory(
-      "POLY-ETH-hours",
+      "WAVES-ETH-hours",
       trainDataByHours
     );
 

@@ -2,11 +2,35 @@ import aws from "aws-sdk";
 import axios from "axios";
 import { readdirSync, readFileSync } from "fs";
 
+import { TransactionResponse } from "ethers";
+import { WithId, WithProofs } from "@waves/waves-transactions";
+import { TransferTransaction } from "@waves/ts-types";
+
 import config from "../config/digitalOcean.config";
 import { ICyptoCompareData, ICyptoCompareHistoryMinutePair } from "../types/cryptoCompare.types";
 import { log, Colors } from "../utils/colored-console";
-import { ICryproExchangeWalletHistory } from "../types/cryptoExchange.types";
+import { ICryproExchangeWalletHistory, ICryptoExchangeResponse, ICryptoExchangeTransactionsHistory } from "../types/cryptoExchange.types";
 import { CryptoBase } from "../types/basic.types";
+import EtheriumWalletService from "./EtheriumWallet.service";
+import WavesWalletService from "./WavesWallet.service";
+
+interface ITransactionHistoryETHProps {
+  from: CryptoBase.ETH;
+  to: CryptoBase.WAVES;
+  coins: CryptoBase[];
+  exchangeAPIResponse: ICryptoExchangeResponse;
+  transactionResponse: TransactionResponse | null;
+}
+
+interface ITransactionHistoryWAVESProps { 
+  from: CryptoBase.WAVES;
+  to: CryptoBase.ETH;
+  coins: CryptoBase[];
+  exchangeAPIResponse: ICryptoExchangeResponse;
+  transactionResponse: (TransferTransaction & WithId & WithProofs) | null;
+}
+
+type TransactionHistoryProps = ITransactionHistoryETHProps | ITransactionHistoryWAVESProps;
 
 class DigitalOceanStorageService {
   public spacesEndpoint: aws.Endpoint;
@@ -99,7 +123,7 @@ class DigitalOceanStorageService {
   };
 
   public getTradingHistory = async (
-    historyName: "POLY-ETH-minute" | "POLY-ETH-hours"
+    historyName: "WAVES-ETH-minute" | "WAVES-ETH-hours"
   ): Promise<ICyptoCompareData[]> => {
     const bucketName = config.bucket;
     const fileName = `${historyName}-trading-history.json`;
@@ -145,6 +169,70 @@ class DigitalOceanStorageService {
     const fileName = `${coin}-wallet-balance-history.json`;
 
     const result = await this.getSavedFile<ICryproExchangeWalletHistory>(fileName, bucketName);
+
+    if (!result) {
+      return [];
+    }
+
+    return Array.from(result.values());
+  };
+
+  public pushTransactionsHistory = async (props: TransactionHistoryProps): Promise<string | null> => {
+    const bucketName = config.bucket;
+    const fileName = `${props.coins[0]}-${props.coins[1]}-transactions-history.json`;
+
+    const ethToWave = props.from === CryptoBase.ETH && props.to === CryptoBase.WAVES;
+
+    const amount = ethToWave
+      ? Number(EtheriumWalletService.convertBigIntToETH(props.transactionResponse?.value || BigInt(0)))
+      : WavesWalletService.convertLongToWaves(props.transactionResponse?.amount);
+    
+    const walletFrom = ethToWave ? EtheriumWalletService.getAddress() : WavesWalletService.getAddress();
+    const walletTo = props.exchangeAPIResponse.payinAddress;
+
+    const transactionHash = ethToWave ? props.transactionResponse?.hash : props.transactionResponse?.id;
+
+    const networkFee = ethToWave
+      ? Number(EtheriumWalletService.convertBigIntToETH(props.transactionResponse?.gasPrice || BigInt(0)))
+      : WavesWalletService.convertLongToWaves(props.transactionResponse?.fee)
+    
+    const transactionHistory: ICryptoExchangeTransactionsHistory = {
+      timestamp: new Date().getTime(),
+      exchangeAPItransactionId: props.exchangeAPIResponse.id,
+      fromCoin: props.from,
+      toCoin: props.to,
+      amount,
+      walletFrom,
+      walletTo,
+      transactionHash: transactionHash || "",
+      networkFee,
+    };
+
+    let savedDataMap = await this.getSavedFile<ICryptoExchangeTransactionsHistory>(fileName, bucketName);
+
+    if (!savedDataMap) {
+      log("[**] No saved file found", Colors.BLUE);
+      savedDataMap = new Map<number, ICryptoExchangeTransactionsHistory>();
+    }
+
+    savedDataMap.set(transactionHistory.timestamp, transactionHistory);
+
+    const input: aws.S3.PutObjectRequest = {
+      Bucket: config.bucket,
+      Key: fileName,
+      Body: JSON.stringify(Array.from(savedDataMap)),
+      ContentType: "plain/json",
+      ACL: "public-read",
+    };
+
+    return this.uploadFile(bucketName, input);
+  };
+
+  public getTransactionsHistory = async (coins: CryptoBase[]): Promise<ICryptoExchangeTransactionsHistory[]> => {
+    const bucketName = config.bucket;
+    const fileName = `${coins[0]}-${coins[1]}-transactions-history.json`;
+
+    const result = await this.getSavedFile<ICryptoExchangeTransactionsHistory>(fileName, bucketName);
 
     if (!result) {
       return [];

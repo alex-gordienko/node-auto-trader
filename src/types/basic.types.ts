@@ -32,6 +32,7 @@ export enum CryptoBase {
 	TRX = "TRX",
 	POLY = "MATIC",
 	XMR = "XMR",
+	WAVES = "WAVES",
 }
 
 export enum CryptoExchangeCoins {
@@ -41,6 +42,7 @@ export enum CryptoExchangeCoins {
 	BNB_BSC = "bnbbsc",
 	TRX = "trx",
 	POLY = "matic",
+	WAVES = "waves",
 }
 
 export enum CryptoExchangePairs {
@@ -52,19 +54,6 @@ export enum CryptoExchangePairs {
 	TRX_ETH = "trx_eth",
 	ETH_POLY = "eth_matic",
 	POLY_ETH = "matic_eth",
-}
-
-export interface IWSconfig {
-	connectToCryptoCompare: (manualCall: boolean) => void
-	subscribeToCryptoCompare: ({
-		subs,
-		exchange,
-		base,
-		quote,
-	}: {
-		subs: CryptoCompareChannels[]
-		exchange: CryptoCompareExchange[]
-		base: CryptoBase[]
-		quote: CryptoBase[]
-	}) => void
+	ETH_WAVES = "eth_waves",
+	WAVES_ETH = "waves_eth",
 }
