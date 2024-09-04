@@ -120,7 +120,7 @@ class CryproCompareService {
           if (predictionByMinute.predictionResultsByMinutes[0].action === "Sell") {
             // The lowest amount of ETH (~$15)
             if (ETHBalance >= 0.0056) {
-              log(`[**] Buying WAVES`, Colors.GREEN);
+              log(`[**] Selling WAVES`, Colors.GREEN);
               const transaction = await CryptoExchangeService.changeETHtoWAVES();
 
               if (transaction) {
@@ -139,7 +139,7 @@ class CryproCompareService {
           } else if (predictionByMinute.predictionResultsByMinutes[0].action === "Buy") {
             // The lowest amount of WAVES (~$15)
             if (WAVESBalance >= 14.423) {
-              log(`[**] Selling WAVES`, Colors.GREEN);
+              log(`[**] Buying WAVES`, Colors.GREEN);
               const transaction = await CryptoExchangeService.changeWAVEStoETH();
 
               if (transaction) {
