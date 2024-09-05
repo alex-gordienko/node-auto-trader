@@ -295,7 +295,7 @@ class TensorflowAI {
 
     // Interpret predictions
     const results = regressionPredictionsArray.map((pred: number[], index: number) => {
-      const time = input[index + timeSteps].time + 60; // Predicting for the next minute
+      const time = (input[index + timeSteps].time + 60) * 1000; // Predicting for the next minute
 
       const actualValue = data[data.length - 1]; // Last known price
 
@@ -324,7 +324,7 @@ class TensorflowAI {
 
     results.forEach((result) => {
       log(
-        `[**] ${format(result.time, "dd/MM/yyyy HH:mm")} Singal from AI: ${result.command}, predicted value: ${
+        `[**] ${format(new Date(result.time), "dd/MM/yyyy HH:mm")} Singal from AI: ${result.command}, predicted currency: ${
           result.predictedValue
         }`,
         Colors.YELLOW

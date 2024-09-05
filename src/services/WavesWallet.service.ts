@@ -1,7 +1,7 @@
 import {
   // nodeInteraction,
   // broadcast,
-  // transfer,
+  transfer,
   WithId,
   WithProofs,
 } from "@waves/waves-transactions";
@@ -9,7 +9,7 @@ import https from "https";
 import { TransferTransaction } from "@waves/ts-types";
 import { log, Colors } from "../utils/colored-console";
 import cryptoConfig from "../config/crypto.config";
-import axios from "axios";
+import axios, { AxiosError } from "axios";
 
 const agent = new https.Agent({
   rejectUnauthorized: false,
@@ -54,15 +54,14 @@ class WavesWalletService {
     amount: number
   ): Promise<(TransferTransaction & WithId & WithProofs) | null> => {
     try {
-      const tx = {
-        type: 4,
-        version: 2,
-        senderPublicKey: this.wavesPrivateKey,
-        recipient: walletTo,
-        amount: amount * Math.pow(10, 8), // Convert WAVES to its smallest unit
-        fee: 100000, // Minimum fee for a transfer transaction
-        timestamp: Date.now(),
-      };
+      const tx = await transfer(
+        {
+          recipient: walletTo,
+          amount: amount * Math.pow(10, 8),
+          fee: 100000,
+        },
+        { privateKey: this.wavesPrivateKey }
+      );
 
       const response = await axios.post(`${this.wavesNodeUrl}/transactions/broadcast`, tx, { httpsAgent: agent });
 
@@ -70,7 +69,12 @@ class WavesWalletService {
       return response.data;
     } catch (error) {
       log(`Error while sending coins`, Colors.RED);
-      log(error, Colors.RED);
+
+      if (error instanceof AxiosError) {
+        log(error.response?.data, Colors.RED);
+      } else {
+        log(error, Colors.RED);
+      }
       return null;
     }
   };
