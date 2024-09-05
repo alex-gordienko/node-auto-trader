@@ -2,6 +2,8 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const cryptoConfig = {
+
+  useGPU: process.env.USE_GPU === "true" || false,
   // api-keys
   cryptoCompareApiKey: process.env.CRYPTO_COMPARE_API_KEY || "YOUR_API_KEY", // get currency rates
   changeNowApiKey: process.env.CHANGE_NOW_API || "YOUR_API_KEY", // exchange currencies
@@ -12,12 +14,10 @@ const cryptoConfig = {
 
   // wallet addresses
   etheriumWallet: process.env.ETHERIUM_WALLET_ADDRESS || "YOUR_WALLET", // wallet for Etherium from Atomic
-  polygonWallet: process.env.POLYGON_WALLET_ADDRESS || "YOUR_WALLET", // wallet for Binance from Atomic
   wavesWallet: process.env.WAVES_WALLET_ADDRESS || "YOUR_WALLET", // wallet for Waves from Atomic
 
   // wallet keys
   etheriumPrivateKey: process.env.ETHERIUM_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Etherium from Atomic
-  polyPrivateKey: process.env.POLYGON_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Binance from Atomic
   wavesPrivateKey: process.env.WAVES_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Waves from Atomic
 
   requestLimitMinutePairPrediction: Number(process.env.REQUEST_LIMIT_PREDICTION || 10),
@@ -33,19 +33,9 @@ const cryptoConfig = {
     interval: Number(process.env.AUTO_DATASET_UPDATE_INTERVAL || 10),
   },
 
-  autoDatasetForHourModelUpdateInterval: {
-    units: (process.env.AUTO_DATASET_UPDATE_HOUR_INTERVAL_UNITS || "hours") as "hours" | "days",
-    interval: Number(process.env.AUTO_DATASET_UPDATE_HOUR_INTERVAL || 2),
-  },
-
   autoRetrainingMinuteModelInterval: {
     units: (process.env.AUTO_RETRAINING_MINUTE_INTERVAL_UNITS || "hours") as "hours" | "days",
     interval: Number(process.env.AUTO_RETRAINING_MINUTE_INTERVAL || 12),
-  },
-
-  autoRetrainingHourModelInterval: {
-    units: (process.env.AUTO_RETRAINING_HOUR_INTERVAL_UNITS || "days") as "hours" | "days",
-    interval: Number(process.env.AUTO_RETRAINING_HOUR_INTERVAL || 1),
   },
 
   autoUpdateWalletBalanceInterval: {

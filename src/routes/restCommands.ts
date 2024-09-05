@@ -2,7 +2,7 @@ import { Router } from "express";
 import { format } from "date-fns";
 import routes from "../config/routes.config";
 
-import CryproCompareService from "../services/CryproCompare.service";
+import CryproCompareService from "../services/CryptoCompare.service";
 import TensorflowService from "../services/Tensorflow.service";
 import DigitalOceanStorageService from "../services/DigitalOcean.storage.service";
 import { CryptoBase } from "../types/basic.types";
@@ -30,36 +30,42 @@ export default () => {
   });
 
   router.get(routes.REST.GET_PREDICTION, async (req, res) => {
-    const testHourData = await CryproCompareService.getHourPairOHLCV(CryptoBase.WAVES, CryptoBase.ETH, 5);
-    const predictionByHour = await TensorflowService.predictNextPrices(testHourData);
+    const testHourData = await CryproCompareService.getMinutePairOHLCV(CryptoBase.WAVES, CryptoBase.ETH, 5);
+    if (!testHourData) { 
+      res.json({
+        status: "error",
+        message: "Error getting test data",
+      });
+      return;
+    }
+    const predictionByMinute = await TensorflowService.predictNextPrices(testHourData.Data.Data);
 
     res.json({
       status: "ok",
       message: "Prediction",
-      predictionByHour,
+      predictionByMinute,
     });
   });
 
   router.get(routes.REST.SAVE_HISTORY, async (req, res) => {
     const trainDataByMinutes = await CryproCompareService.getMinutePairOHLCV(CryptoBase.WAVES, CryptoBase.ETH, 2000);
-
-    const trainDataByHours = await CryproCompareService.getHourPairOHLCV(CryptoBase.WAVES, CryptoBase.ETH, 2000);
+    if (!trainDataByMinutes) {
+      res.json({
+        status: "error",
+        message: "Error getting train data",
+      });
+      return;
+    }
 
     const tradingMinuteHistoryLink = await DigitalOceanStorageService.pushTradingHistory(
       "WAVES-ETH-minute",
       trainDataByMinutes
     );
 
-    const tradingHourlyHistoryLink = await DigitalOceanStorageService.pushTradingHistory(
-      "WAVES-ETH-hours",
-      trainDataByHours
-    );
-
     res.json({
       status: "ok",
       message: "Trading history saved",
       tradingMinuteHistoryLink,
-      tradingHourlyHistoryLink,
     });
   });
 

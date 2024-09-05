@@ -15,6 +15,7 @@
   "dependencies": {
     "@tensorflow/tfjs": "^4.20.0",
     "@tensorflow/tfjs-node": "^4.20.0",
+    "@tensorflow/tfjs-node-gpu": "^4.21.0",
     "@waves/waves-transactions": "^4.3.11",
     "aws-sdk": "^2.1677.0",
     "axios": "^1.7.2",

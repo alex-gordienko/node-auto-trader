@@ -9,7 +9,11 @@ import { TransferTransaction } from "@waves/ts-types";
 import config from "../config/digitalOcean.config";
 import { ICyptoCompareData, ICyptoCompareHistoryMinutePair } from "../types/cryptoCompare.types";
 import { log, Colors } from "../utils/colored-console";
-import { ICryproExchangeWalletHistory, ICryptoExchangeResponse, ICryptoExchangeTransactionsHistory } from "../types/cryptoExchange.types";
+import {
+  ICryproExchangeWalletHistory,
+  ICryptoExchangeResponse,
+  ICryptoExchangeTransactionsHistory,
+} from "../types/cryptoExchange.types";
 import { CryptoBase } from "../types/basic.types";
 import EtheriumWalletService from "./EtheriumWallet.service";
 import WavesWalletService from "./WavesWallet.service";
@@ -22,7 +26,7 @@ interface ITransactionHistoryETHProps {
   transactionResponse: TransactionResponse | null;
 }
 
-interface ITransactionHistoryWAVESProps { 
+interface ITransactionHistoryWAVESProps {
   from: CryptoBase.WAVES;
   to: CryptoBase.ETH;
   coins: CryptoBase[];
@@ -55,8 +59,6 @@ class DigitalOceanStorageService {
         if (err) {
           log(err, Colors.RED);
           log(`Error uploading data: ${data}`, Colors.RED);
-        } else {
-          log(`[**] Successfully uploaded the file for ${input.Key}`, Colors.BLUE);
         }
       });
 
@@ -178,57 +180,57 @@ class DigitalOceanStorageService {
   };
 
   public pushTransactionsHistory = async (props: TransactionHistoryProps): Promise<string | null> => {
-    try{
-    const bucketName = config.bucket;
-    const fileName = `${props.coins[0]}-${props.coins[1]}-transactions-history.json`;
+    try {
+      const bucketName = config.bucket;
+      const fileName = `${props.coins[0]}-${props.coins[1]}-transactions-history.json`;
 
-    const ethToWave = props.from === CryptoBase.ETH && props.to === CryptoBase.WAVES;
+      const ethToWave = props.from === CryptoBase.ETH && props.to === CryptoBase.WAVES;
 
-    const amount = ethToWave
-      ? Number(EtheriumWalletService.convertBigIntToETH(props.transactionResponse?.value || BigInt(0)))
-      : WavesWalletService.convertLongToWaves(props.transactionResponse?.amount);
-    
-    const walletFrom = ethToWave ? EtheriumWalletService.getAddress() : WavesWalletService.getAddress();
-    const walletTo = props.exchangeAPIResponse.payinAddress;
+      const amount = ethToWave
+        ? Number(EtheriumWalletService.convertBigIntToETH(props.transactionResponse?.value || BigInt(0)))
+        : WavesWalletService.convertLongToWaves(props.transactionResponse?.amount);
 
-    const transactionHash = ethToWave ? props.transactionResponse?.hash : props.transactionResponse?.id;
+      const walletFrom = ethToWave ? EtheriumWalletService.getAddress() : WavesWalletService.getAddress();
+      const walletTo = props.exchangeAPIResponse.payinAddress;
 
-    const networkFee = ethToWave
-      ? await EtheriumWalletService.getTransactionFee(transactionHash || "")
-      : WavesWalletService.convertLongToWaves(props.transactionResponse?.fee)
-    
-    const transactionHistory: ICryptoExchangeTransactionsHistory = {
-      timestamp: new Date().getTime(),
-      exchangeAPItransactionId: props.exchangeAPIResponse.id,
-      fromCoin: props.from,
-      toCoin: props.to,
-      amount,
-      walletFrom,
-      walletTo,
-      transactionHash: transactionHash || "",
-      networkFee,
-    };
+      const transactionHash = ethToWave ? props.transactionResponse?.hash : props.transactionResponse?.id;
 
-    let savedDataMap = await this.getSavedFile<ICryptoExchangeTransactionsHistory>(fileName, bucketName);
+      const networkFee = ethToWave
+        ? await EtheriumWalletService.getTransactionFee(transactionHash || "")
+        : WavesWalletService.convertLongToWaves(props.transactionResponse?.fee);
 
-    if (!savedDataMap) {
-      log("[**] No saved file found", Colors.BLUE);
-      savedDataMap = new Map<number, ICryptoExchangeTransactionsHistory>();
-    }
+      const transactionHistory: ICryptoExchangeTransactionsHistory = {
+        timestamp: new Date().getTime(),
+        exchangeAPItransactionId: props.exchangeAPIResponse.id,
+        fromCoin: props.from,
+        toCoin: props.to,
+        amount,
+        walletFrom,
+        walletTo,
+        transactionHash: transactionHash || "",
+        networkFee,
+      };
 
-    savedDataMap.set(transactionHistory.timestamp, transactionHistory);
+      let savedDataMap = await this.getSavedFile<ICryptoExchangeTransactionsHistory>(fileName, bucketName);
 
-    const input: aws.S3.PutObjectRequest = {
-      Bucket: config.bucket,
-      Key: fileName,
-      Body: JSON.stringify(Array.from(savedDataMap)),
-      ContentType: "plain/json",
-      ACL: "public-read",
-    };
+      if (!savedDataMap) {
+        log("[**] No saved file found", Colors.BLUE);
+        savedDataMap = new Map<number, ICryptoExchangeTransactionsHistory>();
+      }
+
+      savedDataMap.set(transactionHistory.timestamp, transactionHistory);
+
+      const input: aws.S3.PutObjectRequest = {
+        Bucket: config.bucket,
+        Key: fileName,
+        Body: JSON.stringify(Array.from(savedDataMap)),
+        ContentType: "plain/json",
+        ACL: "public-read",
+      };
 
       return this.uploadFile(bucketName, input);
     } catch (error) {
-      log('Error while pushing transaction history', Colors.RED);
+      log("Error while pushing transaction history", Colors.RED);
       log(error, Colors.RED);
       return null;
     }
@@ -247,7 +249,7 @@ class DigitalOceanStorageService {
     return Array.from(result.values());
   };
 
-  public saveModel = async (localPath: string, cloudPath: string, modelType: "minutePair" | "hourlyPair") => {
+  public saveModel = async (localPath: string, cloudPath: string, modelType: "minutePair") => {
     const files = readdirSync(localPath);
     const bucketName = config.bucket;
 

@@ -1,3 +1,4 @@
+import { CryptoBase } from './basic.types';
 export interface ICyptoCompareHistoryMinutePair {
   Response: string;
   Message: string;
@@ -9,6 +10,10 @@ export interface ICyptoCompareHistoryMinutePair {
     TimeFrom: number;
     Data: ICyptoCompareData[];
   };
+}
+
+export type ICryptoCompareCurrency = {
+  [key in CryptoBase]: number;
 }
 
 export interface ICyptoCompareData {

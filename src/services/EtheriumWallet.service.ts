@@ -1,15 +1,10 @@
 import * as Ethers from "ethers";
 import cryptoConfig from "../config/crypto.config";
 import { log, Colors } from "../utils/colored-console";
-import repeatEvent from "../utils/timer";
-import DigitalOceanStorageService from "./DigitalOcean.storage.service";
-import { walletAmountStatistic } from "../utils/walletAmountStatistic";
-import { CryptoBase } from "../types/basic.types";
 
 class EtheriumWallet {
   private readonly infuraAPIkey = cryptoConfig.infuraApiKey;
   private readonly etheriumPrivateKey = cryptoConfig.etheriumPrivateKey;
-  private walletTimer: NodeJS.Timeout | null = null;
 
   private wallet: Ethers.ethers.Wallet;
 
@@ -19,42 +14,8 @@ class EtheriumWallet {
     const wallet = new Ethers.ethers.Wallet(this.etheriumPrivateKey, provider);
 
     this.wallet = wallet;
-    this.startAutoUpdate();
     this.getBalance();
   }
-
-  public stopWalletTimer = () => {
-    if (this.walletTimer) {
-      clearInterval(this.walletTimer);
-    }
-  };
-
-  private startAutoUpdate = async () => {
-    const units = cryptoConfig.autoUpdateWalletBalanceInterval.units;
-    const interval = cryptoConfig.autoUpdateWalletBalanceInterval.interval;
-
-    log(`[**] Wallet balance would be auto-updated each ${interval} ${units}`, Colors.CYAN);
-
-    this.walletTimer = repeatEvent({
-      callback: async () => {
-        // get history for statistics
-        const walletHistory = await DigitalOceanStorageService.getWalletBalanceHistory(CryptoBase.ETH);
-
-        // get current balance
-        const balance = await this.getBalance();
-
-        walletAmountStatistic(CryptoBase.ETH, balance, walletHistory);
-
-        // push new value to DigitalOcean
-        await DigitalOceanStorageService.pushWalletBalanceHistory(CryptoBase.ETH, {
-          amount: balance,
-          timestamp: new Date().getTime(),
-        });
-      },
-      units,
-      interval,
-    });
-  };
 
   public convertBigIntToETH = (balance: bigint) => Ethers.ethers.formatEther(balance);
 
