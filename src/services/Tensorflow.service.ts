@@ -98,7 +98,7 @@ class TensorflowAI {
       }
 
       const epochs = 50;
-      const batchSize = 16;
+      const batchSize = 32;
 
       const data = input.map((d) => d.close);
       const timeSteps = 10;
@@ -257,10 +257,11 @@ class TensorflowAI {
     const data = input.map((d) => d.close);
     const timeSteps = 10;
 
+    const min = Math.min(...data);
+    const max = Math.max(...data);
+
     // Normalize the data
     const normalize = (data: number[]) => {
-      const min = Math.min(...data);
-      const max = Math.max(...data);
       return data.map((value) => (value - min) / (max - min));
     };
 
@@ -269,8 +270,6 @@ class TensorflowAI {
     };
 
     const normalizedData = normalize(data);
-    const min = Math.min(...data);
-    const max = Math.max(...data);
 
     // Prepare the data for LSTM
     const xs = [];
@@ -307,9 +306,12 @@ class TensorflowAI {
       const [buy, sell, hold] = classificationPredictionsArray[index];
 
       let command: string;
-      if (buy > sell && buy > hold && (predictedValue - actualValue) / actualValue > feeAdjustedThreshold) {
+      const profitWhenBuy = (predictedValue - actualValue) / actualValue;
+      const profitWhenSell = (actualValue - predictedValue) / actualValue;
+
+      if (buy > sell && buy > hold && profitWhenBuy > feeAdjustedThreshold) {
         command = "Buy";
-      } else if (sell > buy && sell > hold && (actualValue - predictedValue) / actualValue > feeAdjustedThreshold) {
+      } else if (sell > buy && sell > hold && profitWhenSell > feeAdjustedThreshold) {
         command = "Sell";
       } else {
         command = "Hold";
@@ -324,9 +326,10 @@ class TensorflowAI {
 
     results.forEach((result) => {
       log(
-        `[**] ${format(new Date(result.time), "dd/MM/yyyy HH:mm")} Singal from AI: ${result.command}, predicted currency: ${
-          result.predictedValue
-        }`,
+        `[**] Current currency: ${data[data.length - 1]}. Singal from AI: at ${format(
+          new Date(result.time),
+          "dd/MM/yyyy HH:mm"
+        )} - ${result.command}, predicted currency: ${result.predictedValue}`,
         Colors.YELLOW
       );
     });
