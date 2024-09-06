@@ -140,6 +140,24 @@ class StatisticAndPredictionService {
           if (predictionByMinute[0].command === "Buy") {
             // The lowest amount of ETH (~$15)
             if (ETHBalance >= 0.0056) {
+              log(`[**] Buying ETH`, Colors.GREEN);
+              const transaction = await CryptoExchangeService.changeWAVEStoETH();
+
+              if (transaction) {
+                await DigitalOceanStorageService.pushTransactionsHistory({
+                  from: CryptoBase.WAVES,
+                  to: CryptoBase.ETH,
+                  coins: [CryptoBase.ETH, CryptoBase.WAVES],
+                  exchangeAPIResponse: transaction.exchangeAPIresponse,
+                  transactionResponse: transaction.wavesTransaction,
+                });
+              }
+            } else {
+              log(`[**] Cannot buy WAVES, because ETH amount is too low (${ETHBalance})`, Colors.RED);
+            }
+          } else if (predictionByMinute[0].command === "Sell") {
+            // The lowest amount of WAVES (~$15)
+            if (WAVESBalance >= 14.423) {
               log(`[**] Buying WAVES`, Colors.GREEN);
               const transaction = await CryptoExchangeService.changeETHtoWAVES();
 
@@ -150,24 +168,6 @@ class StatisticAndPredictionService {
                   coins: [CryptoBase.ETH, CryptoBase.WAVES],
                   exchangeAPIResponse: transaction.exchangeAPIresponse,
                   transactionResponse: transaction.ethTransaction,
-                });
-              }
-            } else {
-              log(`[**] Cannot buy WAVES, because ETH amount is too low (${ETHBalance})`, Colors.RED);
-            }
-          } else if (predictionByMinute[0].command === "Sell") {
-            // The lowest amount of WAVES (~$15)
-            if (WAVESBalance >= 14.423) {
-              log(`[**] Seling WAVES`, Colors.GREEN);
-              const transaction = await CryptoExchangeService.changeWAVEStoETH();
-
-              if (transaction) {
-                await DigitalOceanStorageService.pushTransactionsHistory({
-                  from: CryptoBase.WAVES,
-                  to: CryptoBase.ETH,
-                  coins: [CryptoBase.ETH, CryptoBase.WAVES],
-                  exchangeAPIResponse: transaction.exchangeAPIresponse,
-                  transactionResponse: transaction.wavesTransaction,
                 });
               }
             } else {
