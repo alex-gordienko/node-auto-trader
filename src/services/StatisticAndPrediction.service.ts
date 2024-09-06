@@ -68,7 +68,7 @@ class StatisticAndPredictionService {
           cryptoConfig.requestLimitMinutePairModelTraining
         );
 
-        if (!tradingMinuteHistory) { 
+        if (!tradingMinuteHistory) {
           log("No trading history for minute pair", Colors.RED);
           return;
         }
@@ -122,15 +122,10 @@ class StatisticAndPredictionService {
           return;
         }
 
-
         const currentPrice = testMinuteData.Data.Data[testMinuteData.Data.Data.length - 1].close;
         const predictedPrice = predictionByMinute[0].predictedValue;
 
-        await this.possibleProfit(
-          predictionByMinute[0].command,
-          currentPrice,
-          predictedPrice
-        );
+        await this.possibleProfit(predictionByMinute[0].command, currentPrice, predictedPrice);
 
         const ETHBalance = await EtheriumWalletService.getBalance();
         const WAVESBalance = await WavesWalletService.getBalance();
@@ -138,8 +133,8 @@ class StatisticAndPredictionService {
         // making swipe due to prediction (THE MOST IMPORTANT PART)
         if (cryptoConfig.environment === "production") {
           if (predictionByMinute[0].command === "Buy") {
-            // The lowest amount of ETH (~$15)
-            if (ETHBalance >= 0.0056) {
+            // The lowest amount of WAVES (~$15)
+            if (WAVESBalance >= 14.423) {
               log(`[**] Buying ETH`, Colors.GREEN);
               const transaction = await CryptoExchangeService.changeWAVEStoETH();
 
@@ -153,11 +148,11 @@ class StatisticAndPredictionService {
                 });
               }
             } else {
-              log(`[**] Cannot buy WAVES, because ETH amount is too low (${ETHBalance})`, Colors.RED);
+              log(`[**] Cannot buy ETH, because WAVES amount is too low (${WAVESBalance})`, Colors.RED);
             }
           } else if (predictionByMinute[0].command === "Sell") {
-            // The lowest amount of WAVES (~$15)
-            if (WAVESBalance >= 14.423) {
+            // The lowest amount of ETH (~$15)
+            if (ETHBalance >= 0.0056) {
               log(`[**] Buying WAVES`, Colors.GREEN);
               const transaction = await CryptoExchangeService.changeETHtoWAVES();
 
@@ -171,7 +166,7 @@ class StatisticAndPredictionService {
                 });
               }
             } else {
-              log(`[**] Cannot buy ETH, because WAVES amount is too low (${WAVESBalance})`, Colors.RED);
+              log(`[**] Cannot buy WAVES, because ETH amount is too low (${ETHBalance})`, Colors.RED);
             }
           } else {
             log(`[**] No action`, Colors.YELLOW);
@@ -202,7 +197,7 @@ class StatisticAndPredictionService {
         const ETHtoUSD = await CryptoCompareService.getCurrentPrice(CryptoBase.ETH, CryptoBase.USD);
         const WAVEStoUSD = await CryptoCompareService.getCurrentPrice(CryptoBase.WAVES, CryptoBase.USD);
 
-        if (!ETHtoUSD || !WAVEStoUSD) { 
+        if (!ETHtoUSD || !WAVEStoUSD) {
           log("Cannot get current price for ETH or WAVES", Colors.RED);
           return;
         }
@@ -277,7 +272,7 @@ class StatisticAndPredictionService {
     const ETHtoUSD = await CryptoCompareService.getCurrentPrice(CryptoBase.ETH, CryptoBase.USD);
     const WAVEStoUSD = await CryptoCompareService.getCurrentPrice(CryptoBase.WAVES, CryptoBase.USD);
 
-    if (!ETHtoUSD || !WAVEStoUSD) { 
+    if (!ETHtoUSD || !WAVEStoUSD) {
       log("Cannot get current price for ETH or WAVES", Colors.RED);
       return;
     }
@@ -291,10 +286,7 @@ class StatisticAndPredictionService {
 
       const potentialProfit = (predictedPrice - currentPrice) * amountToBuy;
       const profitInUSD = potentialProfit * WAVEStoUSD;
-      log(
-        `[**] Potential profit from buying WAVES: ${potentialProfit} ($${profitInUSD})`,
-        Colors.GREEN
-      );
+      log(`[**] Potential profit from buying WAVES: ${potentialProfit} ($${profitInUSD})`, Colors.GREEN);
     }
 
     // Calculate possible profit for Sell action
@@ -306,10 +298,7 @@ class StatisticAndPredictionService {
 
       const potentialProfit = (currentPrice - predictedPrice) * amountToSell;
       const profitInUSD = potentialProfit * ETHtoUSD;
-      log(
-        `[**] Potential profit from selling WAVES: ${potentialProfit} ($${profitInUSD})`,
-        Colors.GREEN
-      );
+      log(`[**] Potential profit from selling WAVES: ${potentialProfit} ($${profitInUSD})`, Colors.GREEN);
     }
   };
 }
