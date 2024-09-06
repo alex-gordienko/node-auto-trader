@@ -6,6 +6,7 @@ import CryproCompareService from "../services/CryptoCompare.service";
 import TensorflowService from "../services/Tensorflow.service";
 import DigitalOceanStorageService from "../services/DigitalOcean.storage.service";
 import { CryptoBase } from "../types/basic.types";
+import cryptoConfig from "../config/crypto.config";
 
 export default () => {
   const router = Router();
@@ -30,7 +31,11 @@ export default () => {
   });
 
   router.get(routes.REST.GET_PREDICTION, async (req, res) => {
-    const testHourData = await CryproCompareService.getMinutePairOHLCV(CryptoBase.WAVES, CryptoBase.ETH, 5);
+    const testHourData = await CryproCompareService.getMinutePairOHLCV(
+      CryptoBase.WAVES,
+      CryptoBase.ETH,
+      cryptoConfig.requestLimitMinutePairPrediction
+    );
     if (!testHourData) { 
       res.json({
         status: "error",

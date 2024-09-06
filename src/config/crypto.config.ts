@@ -20,7 +20,7 @@ const cryptoConfig = {
   etheriumPrivateKey: process.env.ETHERIUM_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Etherium from Atomic
   wavesPrivateKey: process.env.WAVES_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Waves from Atomic
 
-  requestLimitMinutePairPrediction: Number(process.env.REQUEST_LIMIT_PREDICTION || 10),
+  requestLimitMinutePairPrediction: Number(process.env.REQUEST_LIMIT_PREDICTION || 100),
   requestLimitMinutePairModelTraining: Number(process.env.REQUEST_LIMIT_TRAINING || 2000),
 
   autoPredictionInterval: {

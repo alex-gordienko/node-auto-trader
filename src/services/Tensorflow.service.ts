@@ -29,20 +29,30 @@ class TensorflowAI {
   }
 
   private createModel = () => {
-    const input = tf.input({ shape: [10, 1] });
+    const timeSteps = cryptoConfig.requestLimitMinutePairPrediction;
+    const features = 5; // open, high, low, close
 
-    const lstmLayer1 = tf.layers.lstm({ units: 30, returnSequences: true }).apply(input);
-    const lstmLayer2 = tf.layers.lstm({ units: 30, returnSequences: false }).apply(lstmLayer1);
+    const input = tf.input({ shape: [timeSteps, features] });
+
+    const lstmLayer1 = tf.layers
+      .lstm({ units: 30, returnSequences: true, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
+      .apply(input);
+    const lstmLayer2 = tf.layers
+      .lstm({ units: 60, returnSequences: true, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
+      .apply(lstmLayer1);
+    const lstmLayer3 = tf.layers
+      .lstm({ units: 30, returnSequences: false, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
+      .apply(lstmLayer2);
 
     // Output for regression (predicting the currency value)
     const regressionOutput = tf.layers
       .dense({ units: 1, name: "regressionOutput" })
-      .apply(lstmLayer2) as tfType.SymbolicTensor;
+      .apply(lstmLayer3) as tfType.SymbolicTensor;
 
     // Output for classification (predicting the command)
     const classificationOutput = tf.layers
       .dense({ units: 3, activation: "softmax", name: "classificationOutput" })
-      .apply(lstmLayer2) as tfType.SymbolicTensor;
+      .apply(lstmLayer3) as tfType.SymbolicTensor;
 
     const model = tf.model({ inputs: input, outputs: [regressionOutput, classificationOutput] });
 
@@ -70,7 +80,14 @@ class TensorflowAI {
       const minuteModel = await tf.loadLayersModel(`${this.baseURL}/${this.minuteModelCloudDir}/model.json`);
       minuteModel.compile({
         optimizer: tf.train.adam(0.02),
-        loss: "meanSquaredError",
+        loss: {
+          regressionOutput: "meanSquaredError",
+          classificationOutput: "categoricalCrossentropy",
+        },
+        metrics: {
+          regressionOutput: "mse",
+          classificationOutput: "accuracy",
+        },
       });
 
       this.minuteModel = minuteModel;
@@ -98,34 +115,41 @@ class TensorflowAI {
       }
 
       const epochs = 50;
-      const batchSize = 32;
-
-      const data = input.map((d) => d.close);
-      const timeSteps = 10;
+      const batchSize = 64;
+      const timeSteps = cryptoConfig.requestLimitMinutePairPrediction;
 
       // Normalize the data
-      const normalize = (data: number[]) => {
-        const min = Math.min(...data);
-        const max = Math.max(...data);
-        return data.map((value) => (value - min) / (max - min));
+      const normalize = (data: number[], min: number[], max: number[]) => {
+        return data.map((value, index) => (value - min[index]) / (max[index] - min[index]));
       };
 
-      const normalizedData = normalize(data);
+      const data = input.map((d) => [d.time, d.open, d.high, d.low, d.close]);
+
+      const minValues = data.reduce(
+        (acc, val) => val.map((v, i) => Math.min(v, acc[i])),
+        [Infinity, Infinity, Infinity, Infinity, Infinity]
+      );
+      const maxValues = data.reduce(
+        (acc, val) => val.map((v, i) => Math.max(v, acc[i])),
+        [-Infinity, - Infinity, -Infinity, -Infinity, -Infinity]
+      );
+
+      const normalizedData = data.map((d) => normalize(d, minValues, maxValues));
 
       // Prepare the data for LSTM
       const xs = [];
       const ysRegression = [];
       const ysClassification = [];
       for (let i = 0; i < normalizedData.length - timeSteps; i++) {
-        const x = normalizedData.slice(i, i + timeSteps).map((value) => [value]); // Reshape to [timeSteps, 1]
+        const x = normalizedData.slice(i, i + timeSteps); // Reshape to [timeSteps, features]
         xs.push(x);
 
         // Generate labels for next price value (regression)
-        const nextPrice = normalizedData[i + timeSteps];
-        ysRegression.push(nextPrice); // Use the next price as the label
+        const nextPrice = normalizedData[i + timeSteps][4]; // Use the 'close' price as the label
+        ysRegression.push([nextPrice]); // Use the next price as the label
 
         // Generate labels for command (classification)
-        const prevPrice = normalizedData[i + timeSteps - 1];
+        const prevPrice = normalizedData[i + timeSteps - 1][4];
         let command = [0, 0, 0]; // [buy, sell, hold]
         if (nextPrice > prevPrice) {
           command = [1, 0, 0]; // Buy
@@ -138,7 +162,7 @@ class TensorflowAI {
       }
 
       // Corrected tensor shape
-      const xsTensor = tf.tensor3d(xs, [xs.length, timeSteps, 1]);
+      const xsTensor = tf.tensor3d(xs, [xs.length, timeSteps, 5]);
       const ysRegressionTensor = tf.tensor2d(ysRegression, [ysRegression.length, 1]); // Single value for regression
       const ysClassificationTensor = tf.tensor2d(ysClassification, [ysClassification.length, 3]); // One-hot encoded for classification
 
@@ -176,77 +200,6 @@ class TensorflowAI {
     }
   };
 
-  // public predictNextPrices = async (input: ICyptoCompareHistoryMinutePair) => {
-  //   if (!this.minuteModel) {
-  //     console.error("Model not initialized");
-  //     return null;
-  //   }
-
-  //   const data = input.Data.Data.map((d) => ({ time: d.time, close: d.close }));
-  //   const startTime = data[0].time;
-  //   const outputs = data.map((d) => d.close);
-
-  //   // Normalize inputs and outputs
-  //   const minClose = Math.min(...outputs);
-  //   const maxClose = Math.max(...outputs);
-
-  //   // Define the future times in minutes since the start
-  //   const futureMinutes = [11]; // Minutes after the last timestamp in the data
-
-  //   // Convert to tensor
-  //   const futureInputs = tf.tensor2d(futureMinutes.map((minute) => [minute]));
-
-  //   // Predict and denormalize the results
-  //   const predictionsByMinutes = this.minuteModel.predict(futureInputs) as tf.Tensor;
-  //   const predictedPricesByMinutes = predictionsByMinutes
-  //     .dataSync()
-  //     .map((normPrice) => normPrice * (maxClose - minClose) + minClose);
-
-  //   // Calculate short-term and long-term moving averages
-  //   const shortTermPeriod = 5;
-  //   const longTermPeriod = 10;
-
-  //   const shortTermMA = outputs.slice(-shortTermPeriod).reduce((a, b) => a + b, 0) / shortTermPeriod;
-  //   const longTermMA = outputs.slice(-longTermPeriod).reduce((a, b) => a + b, 0) / longTermPeriod;
-
-  //   // Define the network fee as a percentage of the transaction
-  //   const networkFeePercentage = 0.0005; // 0.05% fee
-
-  //   // Display predictions as time-value pairs with Buy/Sell command
-  //   const predictionResultsByMinutes = futureMinutes.map((minute, index) => {
-  //     const predictedTime = startTime + minute * 60; // Convert back to Unix timestamp
-  //     const predictedValue = predictedPricesByMinutes[index];
-  //     const actualValue = outputs[outputs.length - 1]; // Last known price
-
-  //     // Determine buy/sell command based on a moving average crossover strategy
-  //     const priceChangeThreshold = 0.0000001; // Very tight threshold
-  //     const feeAdjustedThreshold = priceChangeThreshold + networkFeePercentage;
-
-  //     let action: string;
-  //     if (shortTermMA > longTermMA && (predictedValue - actualValue) / actualValue > feeAdjustedThreshold) {
-  //       action = "Buy";
-  //     } else if (shortTermMA < longTermMA && (actualValue - predictedValue) / actualValue > feeAdjustedThreshold) {
-  //       action = "Sell";
-  //     } else {
-  //       action = "Hold";
-  //     }
-
-  //     return {
-  //       time: predictedTime,
-  //       predictedValue,
-  //       action,
-  //     };
-  //   });
-
-  //   return {
-  //     last10: data.map((d) => ({
-  //       time: d.time,
-  //       close: d.close,
-  //     })),
-  //     predictionResultsByMinutes,
-  //   };
-  // };
-
   public async predictNextPrices(
     input: ICyptoCompareData[]
   ): Promise<{ time: number; predictedValue: number; command: string }[]> {
@@ -254,31 +207,38 @@ class TensorflowAI {
       throw new Error("Model not loaded");
     }
 
-    const data = input.map((d) => d.close);
-    const timeSteps = 10;
-
-    const min = Math.min(...data);
-    const max = Math.max(...data);
+    const data = input.map((d) => [d.time, d.open, d.high, d.low, d.close]);
+    const timeSteps = cryptoConfig.requestLimitMinutePairPrediction;
 
     // Normalize the data
-    const normalize = (data: number[]) => {
-      return data.map((value) => (value - min) / (max - min));
+    const normalize = (data: number[], min: number[], max: number[]) => {
+      return data.map((value, index) => (value - min[index]) / (max[index] - min[index]));
     };
 
     const denormalize = (value: number, min: number, max: number) => {
       return value * (max - min) + min;
     };
 
-    const normalizedData = normalize(data);
+    const minValues = data.reduce(
+      (acc, val) => val.map((v, i) => Math.min(v, acc[i])),
+      [Infinity, Infinity, Infinity, Infinity, Infinity]
+    );
+    const maxValues = data.reduce(
+      (acc, val) => val.map((v, i) => Math.max(v, acc[i])),
+      [-Infinity, -Infinity, -Infinity, -Infinity, -Infinity]
+    );
+
+
+    const normalizedData = data.map((d) => normalize(d, minValues, maxValues));
 
     // Prepare the data for LSTM
     const xs = [];
     for (let i = 0; i < normalizedData.length - timeSteps; i++) {
-      const x = normalizedData.slice(i, i + timeSteps).map((value) => [value]); // Ensure each value is wrapped in an array to create a 2D array [timeSteps, 1]
+      const x = normalizedData.slice(i, i + timeSteps) // Ensure each value is wrapped in an array to create a 2D array [timeSteps, 1]
       xs.push(x);
     }
 
-    const xsTensor = tf.tensor3d(xs, [xs.length, timeSteps, 1]); // Create 3D tensor with shape [batchSize, timeSteps, features]
+    const xsTensor = tf.tensor3d(xs, [xs.length, timeSteps, 5]); // Create 3D tensor with shape [batchSize, timeSteps, features]
 
     // Make predictions
     const [regressionPredictions, classificationPredictions] = this.minuteModel.predict(xsTensor) as tfType.Tensor[];
@@ -296,11 +256,11 @@ class TensorflowAI {
     const results = regressionPredictionsArray.map((pred: number[], index: number) => {
       const time = (input[index + timeSteps].time + 60) * 1000; // Predicting for the next minute
 
-      const actualValue = data[data.length - 1]; // Last known price
+      const actualValue = input[input.length - 1].close; // Last known price
 
       // predicted value by AI
       const normalizedPredictedValue = pred[0]; // Single value for regression
-      const predictedValue = denormalize(normalizedPredictedValue, min, max);
+      const predictedValue = denormalize(normalizedPredictedValue, minValues[4], maxValues[4]); // Denormalize using 'close' price min and max
 
       // predicted command by AI
       const [buy, sell, hold] = classificationPredictionsArray[index];
