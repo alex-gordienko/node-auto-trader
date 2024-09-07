@@ -286,7 +286,7 @@ class TensorflowAI {
 
     results.forEach((result) => {
       log(
-        `[**] Current currency: ${data[data.length - 1]}. Singal from AI: at ${format(
+        `[**] Current currency: ${data[data.length - 1][4]}. Singal from AI: at ${format(
           new Date(result.time),
           "dd/MM/yyyy HH:mm"
         )} - ${result.command}, predicted currency: ${result.predictedValue}`,
