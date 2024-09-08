@@ -20,12 +20,20 @@ export default () => {
   });
 
   router.get(routes.REST.LEARN_TENSORFLOW, async (req, res) => {
+    let modelName = req.query.modelName as 'minute' | 'long-term';
+
+    console.log("modelName", modelName);
+
+    if (!modelName || !["minute", "long-term"].includes(modelName)) {
+      modelName = "minute";
+    }
     const trainDataByMinutes = await DigitalOceanStorageService.getTradingHistory("WAVES-ETH-minute");
 
-    TensorflowService.trainModel("minutePair", trainDataByMinutes);
+    TensorflowService.trainModel(modelName, trainDataByMinutes);
 
     res.json({
       status: "ok",
+      modelName,
       message: "Training model's started",
     });
   });
@@ -36,7 +44,7 @@ export default () => {
       CryptoBase.ETH,
       cryptoConfig.requestLimitMinutePairPrediction
     );
-    if (!testHourData) { 
+    if (!testHourData) {
       res.json({
         status: "error",
         message: "Error getting test data",

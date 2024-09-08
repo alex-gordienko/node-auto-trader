@@ -249,7 +249,7 @@ class DigitalOceanStorageService {
     return Array.from(result.values());
   };
 
-  public saveModel = async (localPath: string, cloudPath: string, modelType: "minutePair") => {
+  public saveModel = async (localPath: string, cloudPath: string) => {
     const files = readdirSync(localPath);
     const bucketName = config.bucket;
 
@@ -262,7 +262,7 @@ class DigitalOceanStorageService {
         ACL: "public-read",
       };
 
-      log(`[**] Uploading ${modelType}: ${file}`, Colors.BLUE);
+      log(`[**] Uploading model: ${file}`, Colors.BLUE);
       await this.uploadFile(bucketName, input);
     }
   };

@@ -90,7 +90,8 @@ class StatisticAndPredictionService {
       callback: async () => {
         const trainDataByMinutes = await DigitalOceanStorageService.getTradingHistory("WAVES-ETH-minute");
 
-        TensorflowService.trainModel("minutePair", trainDataByMinutes);
+        TensorflowService.trainModel('minute', trainDataByMinutes);
+        TensorflowService.trainModel('long-term', trainDataByMinutes);
       },
       units: unitsForMinutes,
       interval: intervalForMinutes,
@@ -123,16 +124,16 @@ class StatisticAndPredictionService {
         }
 
         const currentPrice = testMinuteData.Data.Data[testMinuteData.Data.Data.length - 1].close;
-        const predictedPrice = predictionByMinute[0].predictedValue;
+        const predictedPrice = predictionByMinute[0].LSTMpredictedValue;
 
-        await this.possibleProfit(predictionByMinute[0].command, currentPrice, predictedPrice);
+        await this.possibleProfit(predictionByMinute[0].LSTMcommand, currentPrice, predictedPrice);
 
         const ETHBalance = await EtheriumWalletService.getBalance();
         const WAVESBalance = await WavesWalletService.getBalance();
 
         // making swipe due to prediction (THE MOST IMPORTANT PART)
         if (cryptoConfig.environment === "production") {
-          if (predictionByMinute[0].command === "Buy") {
+          if (predictionByMinute[0].LSTMcommand === "Buy") {
             // The lowest amount of ETH (~$15)
             if (ETHBalance >= 0.0056) {
               log(`[**] Buying WAVES`, Colors.GREEN);
@@ -150,7 +151,7 @@ class StatisticAndPredictionService {
             } else {
               log(`[**] Cannot buy WAVES, because ETH amount is too low (${ETHBalance})`, Colors.RED);
             }
-          } else if (predictionByMinute[0].command === "Sell") {
+          } else if (predictionByMinute[0].LSTMcommand === "Sell") {
             // The lowest amount of WAVES (~$15)
             if (WAVESBalance >= 14.423) {
               log(`[**] Buying ETH`, Colors.GREEN);
