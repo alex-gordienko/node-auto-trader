@@ -12,6 +12,7 @@ import { CryptoBase, CryptoExchangeCoins } from "../types/basic.types";
 import { ICryproExchangeWalletHistory } from "../types/cryptoExchange.types";
 
 class StatisticAndPredictionService {
+  private isAbleToTrade: boolean = true;
   // timers for updating trading history dataset
   private historyMinutePairTimer: NodeJS.Timeout | null = null;
 
@@ -88,10 +89,11 @@ class StatisticAndPredictionService {
 
     this.retrainingMinuteModelTimer = repeatEvent({
       callback: async () => {
+        this.isAbleToTrade = false;
         const trainDataByMinutes = await DigitalOceanStorageService.getTradingHistory("WAVES-ETH-minute");
 
-        TensorflowService.trainModel('minute', trainDataByMinutes);
-        TensorflowService.trainModel('long-term', trainDataByMinutes);
+        await TensorflowService.trainModel("minute", trainDataByMinutes);
+        this.isAbleToTrade = await TensorflowService.trainModel("long-term", trainDataByMinutes);
       },
       units: unitsForMinutes,
       interval: intervalForMinutes,
@@ -133,7 +135,10 @@ class StatisticAndPredictionService {
 
         // making swipe due to prediction (THE MOST IMPORTANT PART)
         if (cryptoConfig.environment === "production") {
-          if (predictionByMinute[0].LSTMcommand === "Buy") {
+          if (!this.isAbleToTrade) {
+            log(`[**] Cannot trade now, because models are retraining`, Colors.RED);
+            return;
+          } else if (predictionByMinute[0].LSTMcommand === "Buy") {
             // The lowest amount of ETH (~$15)
             if (ETHBalance >= 0.0056) {
               log(`[**] Buying WAVES`, Colors.GREEN);

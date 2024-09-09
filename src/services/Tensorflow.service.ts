@@ -187,12 +187,12 @@ class TensorflowAI {
     log("[**] Long Term (LSTM) Model saved to file", Colors.GREEN);
   };
 
-  public trainModel = async (model: "minute" | "long-term", input: ICyptoCompareData[]) => {
+  public trainModel = async (model: "minute" | "long-term", input: ICyptoCompareData[]): Promise<boolean> => {
     const modetToTrain = model === "minute" ? this.minuteModel : this.longTermModel;
     try {
       if (!modetToTrain) {
         console.error("Model not initialized");
-        return;
+        return false;
       }
 
       const epochs = 50;
@@ -275,8 +275,10 @@ class TensorflowAI {
       model === "minute" ? await this.saveMinuteModel() : await this.saveLongTermModel();
 
       log(`[**] ${model} Model training completed`, Colors.GREEN);
+      return true;
     } catch (error) {
       console.error("Error during training:", error);
+      return false;
     }
   };
 
