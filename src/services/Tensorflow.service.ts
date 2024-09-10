@@ -35,7 +35,7 @@ class TensorflowAI {
   }
 
   private createMinuteModel = () => {
-    const timeSteps = cryptoConfig.requestLimitMinutePairPrediction;
+    const timeSteps = 1
     const features = 5; // open, high, low, close
 
     const input = tf.input({ shape: [timeSteps, features] });
@@ -77,7 +77,7 @@ class TensorflowAI {
   };
 
   private createLongTermModel = () => {
-    const timeSteps = cryptoConfig.requestLimitMinutePairPrediction;
+    const timeSteps = 15;
     const features = 5; // open, high, low, close
 
     const input = tf.input({ shape: [timeSteps, features] });
