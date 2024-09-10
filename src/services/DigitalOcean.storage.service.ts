@@ -13,6 +13,7 @@ import {
   ICryproExchangeWalletHistory,
   ICryptoExchangeResponse,
   ICryptoExchangeTransactionsHistory,
+  ITensorflowPrediction,
 } from "../types/cryptoExchange.types";
 import { CryptoBase } from "../types/basic.types";
 import EtheriumWalletService from "./EtheriumWallet.service";
@@ -138,6 +139,46 @@ class DigitalOceanStorageService {
 
     return Array.from(result.values());
   };
+
+  public pushTensorflowPredictionHistory = async (prediction: ITensorflowPrediction[]): Promise<string | null> => {
+    const bucketName = config.bucket;
+    const fileName = `WAVES-ETH-prediction-history.json`;
+
+    let savedDataMap = await this.getSavedFile<ITensorflowPrediction>(fileName, bucketName);
+
+    if (!savedDataMap) {
+      log("[**] No saved file found", Colors.BLUE);
+      savedDataMap = new Map<number, ITensorflowPrediction>();
+    }
+
+    prediction.forEach((prediction) => {
+      savedDataMap.set(prediction.timestamp, prediction);
+    });
+
+    const input: aws.S3.PutObjectRequest = {
+      Bucket: config.bucket,
+      Key: fileName,
+      Body: JSON.stringify(Array.from(savedDataMap)),
+      ContentType: "plain/json",
+      ACL: "public-read",
+    };
+
+    return this.uploadFile(bucketName, input);
+  }
+
+  public getTensorflowPredictionHistory = async (): Promise<ITensorflowPrediction[]> => {
+    const bucketName = config.bucket;
+    const fileName = `WAVES-ETH-prediction-history.json`;
+
+    const result = await this.getSavedFile<ITensorflowPrediction>(fileName, bucketName);
+
+    if (!result) {
+      return [];
+    }
+
+    return Array.from(result.values());
+  };
+   
 
   public pushWalletBalanceHistory = async (
     coin: CryptoBase,

@@ -25,6 +25,20 @@ export interface ICryproExchangeWalletHistory {
   amount: number;
 }
 
+export interface ITensorflowPrediction {
+  timestamp: number;
+  LSTMpredictedValue: number;
+  LSTMcommand: string;
+  CNNpredictedValue: number;
+  CNNcommand: string;
+}
+
+export interface ITensorflowPredictionHistory {
+  timestamp: number;
+  lstmPrediction: number;
+  cnnPrediction: number;
+}
+
 export interface ICryptoExchangeTransactionsHistory {
   exchangeAPItransactionId: string;
   timestamp: number;

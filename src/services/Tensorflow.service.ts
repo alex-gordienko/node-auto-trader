@@ -8,6 +8,7 @@ import cryptoConfig from "../config/crypto.config";
 import { ICyptoCompareData } from "../types/cryptoCompare.types";
 import { log, Colors } from "../utils/colored-console";
 import DigitalOceanStorageService from "./DigitalOcean.storage.service";
+import { ITensorflowPrediction } from "../types/cryptoExchange.types";
 
 // Import TensorFlow.js types
 
@@ -35,7 +36,7 @@ class TensorflowAI {
   }
 
   private createMinuteModel = () => {
-    const timeSteps = 1
+    const timeSteps = cryptoConfig.requestLimitMinutePairPrediction;
     const features = 5; // open, high, low, close
 
     const input = tf.input({ shape: [timeSteps, features] });
@@ -77,7 +78,7 @@ class TensorflowAI {
   };
 
   private createLongTermModel = () => {
-    const timeSteps = 15;
+    const timeSteps = cryptoConfig.requestLimitMinutePairPrediction;
     const features = 5; // open, high, low, close
 
     const input = tf.input({ shape: [timeSteps, features] });
@@ -282,11 +283,7 @@ class TensorflowAI {
     }
   };
 
-  public async predictNextPrices(
-    input: ICyptoCompareData[]
-  ): Promise<
-    { time: number; LSTMpredictedValue: number; LSTMcommand: string; CNNpredictedValue: number; CNNcommand: string }[]
-  > {
+  public async predictNextPrices(input: ICyptoCompareData[]): Promise<ITensorflowPrediction[]> {
     if (!this.minuteModel || !this.longTermModel) {
       throw new Error("Models not loaded");
     }
@@ -386,7 +383,7 @@ class TensorflowAI {
       }
 
       return {
-        time,
+        timestamp: time,
         LSTMpredictedValue,
         LSTMcommand: commandFromLSTM,
         CNNpredictedValue: cnnPredictedValue,
@@ -396,7 +393,7 @@ class TensorflowAI {
 
     results.forEach((result) => {
       const currentCurrency = data[data.length - 1][4];
-      const nextMinute = format(new Date(result.time), "dd/MM/yyyy HH:mm");
+      const nextMinute = format(new Date(result.timestamp), "dd/MM/yyyy HH:mm");
       const LSTMpredictedValue = result.LSTMpredictedValue;
       const LSTMcommand = result.LSTMcommand;
       const CNNpredictedValue = result.CNNpredictedValue;

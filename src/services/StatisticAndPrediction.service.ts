@@ -125,6 +125,8 @@ class StatisticAndPredictionService {
           return;
         }
 
+        await DigitalOceanStorageService.pushTensorflowPredictionHistory(predictionByMinute);
+
         const currentPrice = testMinuteData.Data.Data[testMinuteData.Data.Data.length - 1].close;
         const predictedPrice = predictionByMinute[0].LSTMpredictedValue;
 
@@ -208,6 +210,11 @@ class StatisticAndPredictionService {
           return;
         }
 
+        if (!balanceETH || !balanceWAVES) { 
+          log(`Cannot get current balance for ETH (${balanceETH}) or WAVES (${balanceWAVES})`, Colors.RED);
+          return;
+        }
+
         this.walletAmountStatistic(
           balanceETH,
           walletETHHistory,
@@ -241,37 +248,42 @@ class StatisticAndPredictionService {
     ethToUSD: number,
     wavesToUSD: number
   ): void => {
-    const firstETHamount = ethHistory[0].amount;
-    const firstWAVESamount = wavesHistory[0].amount;
+    try {
+      const firstETHamount = ethHistory[0].amount;
+      const firstWAVESamount = wavesHistory[0].amount;
 
-    const diffETHsinceStart = ethBalance - firstETHamount;
-    const diffWAVESsinceStart = wavesBalance - firstWAVESamount;
+      const diffETHsinceStart = ethBalance - firstETHamount;
+      const diffWAVESsinceStart = wavesBalance - firstWAVESamount;
 
-    const ETHusd = ethBalance * ethToUSD;
-    const WAVESusd = wavesBalance * wavesToUSD;
+      const ETHusd = ethBalance * ethToUSD;
+      const WAVESusd = wavesBalance * wavesToUSD;
 
-    const diffETHusd = diffETHsinceStart * ethToUSD;
-    const diffWAVESusd = diffWAVESsinceStart * wavesToUSD;
+      const diffETHusd = diffETHsinceStart * ethToUSD;
+      const diffWAVESusd = diffWAVESsinceStart * wavesToUSD;
 
-    let message = Colors.GREEN + `Balance: ~$${(ETHusd + WAVESusd).toFixed(3)} `;
+      let message = Colors.GREEN + `Balance: ~$${(ETHusd + WAVESusd).toFixed(3)} `;
 
-    message += ` | ETH: ${ethBalance.toFixed(5)} ($${ETHusd.toFixed(3)}) `;
+      message += ` | ETH: ${ethBalance.toFixed(5)} ($${ETHusd.toFixed(3)}) `;
 
-    if (diffETHsinceStart > 0) {
-      message += Colors.GREEN + ` +${diffETHsinceStart.toFixed(5)} (+${diffETHusd.toFixed(3)} $) since start `;
-    } else {
-      message += Colors.RED + ` ${diffETHsinceStart.toFixed(5)} (${diffETHusd.toFixed(3)} $) since start `;
+      if (diffETHsinceStart > 0) {
+        message += Colors.GREEN + ` +${diffETHsinceStart.toFixed(5)} (+${diffETHusd.toFixed(3)} $) since start `;
+      } else {
+        message += Colors.RED + ` ${diffETHsinceStart.toFixed(5)} (${diffETHusd.toFixed(3)} $) since start `;
+      }
+
+      message += Colors.GREEN + ` | WAVES: ${wavesBalance.toFixed(5)} ($${WAVESusd.toFixed(3)}) `;
+
+      if (diffWAVESsinceStart > 0) {
+        message += Colors.GREEN + ` +${diffWAVESsinceStart.toFixed(5)} (+${diffWAVESusd.toFixed(3)} $) since start `;
+      } else {
+        message += Colors.RED + ` ${diffWAVESsinceStart.toFixed(5)} (${diffWAVESusd.toFixed(3)} $) since start `;
+      }
+
+      log(message);
+    } catch (error) {
+      log("Error while calculating wallet statistics", Colors.RED);
+      log(error, Colors.RED);
     }
-
-    message += Colors.GREEN + ` | WAVES: ${wavesBalance.toFixed(5)} ($${WAVESusd.toFixed(3)}) `;
-
-    if (diffWAVESsinceStart > 0) {
-      message += Colors.GREEN + ` +${diffWAVESsinceStart.toFixed(5)} (+${diffWAVESusd.toFixed(3)} $) since start `;
-    } else {
-      message += Colors.RED + ` ${diffWAVESsinceStart.toFixed(5)} (${diffWAVESusd.toFixed(3)} $) since start `;
-    }
-
-    log(message);
   };
 
   private possibleProfit = async (action: string, currentPrice: number, predictedPrice: number) => {

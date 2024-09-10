@@ -62,7 +62,7 @@ class CryproCompareService {
     }
   };
 
-  public getCurrentPrice = async (base: CryptoBase, to: CryptoBase) => { 
+  public getCurrentPrice = async (base: CryptoBase, to: CryptoBase): Promise<number | null> => { 
     try {
       const url = `${this.apiUrl}/price`;
 
