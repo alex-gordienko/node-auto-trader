@@ -15,7 +15,7 @@ class CryproCompareService {
   public getMinutePairOHLCV = async (
     base: CryptoBase,
     to: CryptoBase,
-    limit: number = Number(cryptoConfig.requestLimitMinutePairPrediction)
+    limit: number = 100
   ) => {
     try {
       const url = `${this.apiUrl}/v2/histominute`;

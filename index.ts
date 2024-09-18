@@ -12,7 +12,7 @@ import { log, Colors } from "./src/utils/colored-console";
 const initApp = async () => {
   const app = express();
 
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT || 3001;
 
   app.use(express.json());
   router(app);

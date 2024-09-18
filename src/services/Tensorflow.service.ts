@@ -36,7 +36,7 @@ class TensorflowAI {
   }
 
   private createMinuteModel = () => {
-    const timeSteps = cryptoConfig.requestLimitMinutePairPrediction;
+    const timeSteps = cryptoConfig.shortTermMinuteWindowPrediction;
     const features = 5; // open, high, low, close
 
     const input = tf.input({ shape: [timeSteps, features] });
@@ -78,7 +78,7 @@ class TensorflowAI {
   };
 
   private createLongTermModel = () => {
-    const timeSteps = cryptoConfig.requestLimitMinutePairPrediction;
+    const timeSteps = cryptoConfig.longTermMinuteWindowPrediction;
     const features = 5; // open, high, low, close
 
     const input = tf.input({ shape: [timeSteps, features] });
@@ -198,7 +198,8 @@ class TensorflowAI {
 
       const epochs = 50;
       const batchSize = 64;
-      const timeSteps = cryptoConfig.requestLimitMinutePairPrediction;
+      const timeSteps =
+        model === "minute" ? cryptoConfig.shortTermMinuteWindowPrediction : cryptoConfig.longTermMinuteWindowPrediction;
 
       // Normalize the data
       const normalize = (data: number[], min: number[], max: number[]) => {
@@ -283,53 +284,50 @@ class TensorflowAI {
     }
   };
 
+  private prepareInputData(data: number[][], timeSteps: number): tfType.Tensor {
+    // Нормализация данных
+    const normalizedData = this.normalizeData(data);
+
+    // Подготовка входных данных для модели
+    const inputData = [];
+    for (let i = 0; i < normalizedData.length - timeSteps; i++) {
+      const x = normalizedData.slice(i, i + timeSteps);
+      inputData.push(x);
+    }
+
+    // Преобразование в тензор
+    return tf.tensor3d(inputData, [inputData.length, timeSteps, data[0].length]);
+  }
+
+  private normalizeData(data: number[][]): number[][] {
+    // Пример нормализации данных (может быть изменен в зависимости от требований)
+    const min = Math.min(...data.flat());
+    const max = Math.max(...data.flat());
+    return data.map((row) => row.map((value) => (value - min) / (max - min)));
+  }
+
   public async predictNextPrices(input: ICyptoCompareData[]): Promise<ITensorflowPrediction[]> {
     if (!this.minuteModel || !this.longTermModel) {
       throw new Error("Models not loaded");
     }
 
     const data = input.map((d) => [d.time, d.open, d.high, d.low, d.close]);
-    const timeSteps = cryptoConfig.requestLimitMinutePairPrediction;
+    const timeStepsShort = cryptoConfig.shortTermMinuteWindowPrediction;
+    const timeStepsLong = cryptoConfig.longTermMinuteWindowPrediction;
 
-    // Normalize the data
-    const normalize = (data: number[], min: number[], max: number[]) => {
-      return data.map((value, index) => (value - min[index]) / (max[index] - min[index]));
-    };
-
-    const denormalize = (value: number, min: number, max: number) => {
-      return value * (max - min) + min;
-    };
-
-    const minValues = data.reduce(
-      (acc, val) => val.map((v, i) => Math.min(v, acc[i])),
-      [Infinity, Infinity, Infinity, Infinity, Infinity]
-    );
-    const maxValues = data.reduce(
-      (acc, val) => val.map((v, i) => Math.max(v, acc[i])),
-      [-Infinity, -Infinity, -Infinity, -Infinity, -Infinity]
-    );
-
-    const normalizedData = data.map((d) => normalize(d, minValues, maxValues));
-
-    // Prepare the data for LSTM
-    const xs = [];
-    for (let i = 0; i < normalizedData.length - timeSteps; i++) {
-      const x = normalizedData.slice(i, i + timeSteps); // Ensure each value is wrapped in an array to create a 2D array [timeSteps, 1]
-      xs.push(x);
-    }
-
-    const xsTensor = tf.tensor3d(xs, [xs.length, timeSteps, 5]); // Create 3D tensor with shape [batchSize, timeSteps, features]
+    const xsShortTensor = this.prepareInputData(data, timeStepsShort);
+    const xsLongTensor = this.prepareInputData(data, timeStepsLong);
 
     // Make predictions by CNN Model
     const [CNNregressionPredictions, CNNclassificationPredictions] = this.minuteModel.predict(
-      xsTensor
+      xsShortTensor
     ) as tfType.Tensor[];
     const CNNregressionPredictionsArray = (await CNNregressionPredictions.array()) as number[][];
     const CNNclassificationPredictionsArray = (await CNNclassificationPredictions.array()) as number[][];
 
     // Make predictions by LSTM Model
     const [LSTMregressionPredictions, LSTMclassificationPredictions] = this.longTermModel.predict(
-      xsTensor
+      xsLongTensor
     ) as tfType.Tensor[];
     const LSTMregressionPredictionsArray = (await LSTMregressionPredictions.array()) as number[][];
     const LSTMclassificationPredictionsArray = (await LSTMclassificationPredictions.array()) as number[][];
@@ -341,66 +339,82 @@ class TensorflowAI {
 
     const feeAdjustedThreshold = threshold + networkFeePercentage;
 
-    log(`LSTMregressionPredictionsArray: ${LSTMregressionPredictionsArray[0].length}`, Colors.YELLOW);
-    log(`CNNregressionPredictionsArray: ${CNNregressionPredictionsArray[0].length}`, Colors.YELLOW);
     // Interpret predictions
-    const results = LSTMregressionPredictionsArray.map((pred: number[], index: number) => {
-      const time = (input[index + timeSteps].time + 60) * 1000; // Predicting for the next minute
+    const results: ITensorflowPrediction[] = [];
 
-      const actualValue = input[input.length - 1].close; // Last known price
+    // Get min and max values for denormalization
+    const minValues = data.reduce(
+      (acc, val) => val.map((v, i) => Math.min(v, acc[i])),
+      [Infinity, Infinity, Infinity, Infinity, Infinity]
+    );
+    const maxValues = data.reduce(
+      (acc, val) => val.map((v, i) => Math.max(v, acc[i])),
+      [-Infinity, -Infinity, -Infinity, -Infinity, -Infinity]
+    );
 
-      // predicted value by AI
-      const LSTMpredictedValue = denormalize(pred[0], minValues[4], maxValues[4]); // Denormalize using 'close' price min and max
+    // Function to denormalize values
+    const denormalize = (value: number, min: number, max: number) => {
+      return value * (max - min) + min;
+    };
 
-      const cnnPredictedValue = denormalize(CNNregressionPredictionsArray[index][0], minValues[4], maxValues[4]);
+    // Predict for 5 minutes using CNN Model
+    const cnnIndex = xsShortTensor.shape[0] - 1;
+    const cnnTime = (input[input.length - 1].time + 5 * 60) * 1000; // Predicting for the next 5 minutes
+    const cnnActualValue = input[input.length - 1].close; // Last known price
+    const cnnPredictedValue = denormalize(CNNregressionPredictionsArray[cnnIndex][0], minValues[4], maxValues[4]);
 
-      // predicted command by AI
-      const [LSTMbuy, LSTMsell, LSTMhold] = LSTMclassificationPredictionsArray[index];
-      const [CNNbuy, CNNsell, CNNhold] = CNNclassificationPredictionsArray[index];
+    const [CNNbuy, CNNsell, CNNhold] = CNNclassificationPredictionsArray[cnnIndex];
+    let cnnCommand: string;
+    const cnnProfitWhenBuy = (cnnPredictedValue - cnnActualValue) / cnnActualValue;
+    const cnnProfitWhenSell = (cnnActualValue - cnnPredictedValue) / cnnActualValue;
+    if (CNNbuy > CNNsell && CNNbuy > CNNhold && cnnProfitWhenBuy > feeAdjustedThreshold) {
+      cnnCommand = "Buy";
+    } else if (CNNsell > CNNbuy && CNNsell > CNNhold && cnnProfitWhenSell > feeAdjustedThreshold) {
+      cnnCommand = "Sell";
+    } else {
+      cnnCommand = "Hold";
+    }
 
-      let commandFromLSTM: string;
-      const LSTMprofitWhenBuy = (LSTMpredictedValue - actualValue) / actualValue;
-      const LSTMprofitWhenSell = (actualValue - LSTMpredictedValue) / actualValue;
+    // Predict for 15 minutes using LSTM Model
+    const lstmIndex = xsLongTensor.shape[0] - 1;
+    const lstmTime = (input[input.length - 1].time + 15 * 60) * 1000; // Predicting for the next 15 minutes
+    const lstmActualValue = input[input.length - 1].close; // Last known price
+    const lstmPredictedValue = denormalize(LSTMregressionPredictionsArray[lstmIndex][0], minValues[4], maxValues[4]);
 
-      if (LSTMbuy > LSTMsell && LSTMbuy > LSTMhold && LSTMprofitWhenBuy > feeAdjustedThreshold) {
-        commandFromLSTM = "Buy";
-      } else if (LSTMsell > LSTMbuy && LSTMsell > LSTMhold && LSTMprofitWhenSell > feeAdjustedThreshold) {
-        commandFromLSTM = "Sell";
-      } else {
-        commandFromLSTM = "Hold";
-      }
+    const [LSTMbuy, LSTMsell, LSTMhold] = LSTMclassificationPredictionsArray[lstmIndex];
+    let lstmCommand: string;
+    const lstmProfitWhenBuy = (lstmPredictedValue - lstmActualValue) / lstmActualValue;
+    const lstmProfitWhenSell = (lstmActualValue - lstmPredictedValue) / lstmActualValue;
+    if (LSTMbuy > LSTMsell && LSTMbuy > LSTMhold && lstmProfitWhenBuy > feeAdjustedThreshold) {
+      lstmCommand = "Buy";
+    } else if (LSTMsell > LSTMbuy && LSTMsell > LSTMhold && lstmProfitWhenSell > feeAdjustedThreshold) {
+      lstmCommand = "Sell";
+    } else {
+      lstmCommand = "Hold";
+    }
 
-      let commandFromCNN: string;
-      const CNNprofitWhenBuy = (cnnPredictedValue - actualValue) / actualValue;
-      const CNNprofitWhenSell = (actualValue - cnnPredictedValue) / actualValue;
-
-      if (CNNbuy > CNNsell && CNNbuy > CNNhold && CNNprofitWhenBuy > feeAdjustedThreshold) {
-        commandFromCNN = "Buy";
-      } else if (CNNsell > CNNbuy && CNNsell > CNNhold && CNNprofitWhenSell > feeAdjustedThreshold) {
-        commandFromCNN = "Sell";
-      } else {
-        commandFromCNN = "Hold";
-      }
-
-      return {
-        timestamp: time,
-        LSTMpredictedValue,
-        LSTMcommand: commandFromLSTM,
-        CNNpredictedValue: cnnPredictedValue,
-        CNNcommand: commandFromCNN,
-      };
+    results.push({
+      timestamp: Math.floor(Date.now() / 1000) * 1000,
+      CNNtimestamp: cnnTime,
+      CNNpredictedValue: cnnPredictedValue,
+      CNNcommand: cnnCommand,
+      LSTMtimestamp: lstmTime,
+      LSTMpredictedValue: lstmPredictedValue,
+      LSTMcommand: lstmCommand,
     });
 
     results.forEach((result) => {
       const currentCurrency = data[data.length - 1][4];
-      const nextMinute = format(new Date(result.timestamp), "dd/MM/yyyy HH:mm");
+      const now = format(new Date(result.timestamp), "dd/MM/yy HH:mm");
+      const lstmDate = format(new Date(result.LSTMtimestamp), "dd/MM/yy HH:mm");
+      const cnnDate = format(new Date(result.CNNtimestamp), "dd/MM/yy HH:mm");
       const LSTMpredictedValue = result.LSTMpredictedValue;
       const LSTMcommand = result.LSTMcommand;
       const CNNpredictedValue = result.CNNpredictedValue;
       const CNNcommand = result.CNNcommand;
 
       log(
-        `[**] Current currency: ${currentCurrency}. Singal from AI: at ${nextMinute} - LSTM: ${LSTMcommand}, predicted currency: ${LSTMpredictedValue}, CNN: ${CNNcommand}, predicted currency: ${CNNpredictedValue}`,
+        `[**] ${now} Current currency: ${currentCurrency}. CNN: ${CNNcommand}: ${CNNpredictedValue} at ${cnnDate}, LSTM: ${LSTMcommand}: ${LSTMpredictedValue} at ${lstmDate}`,
         Colors.YELLOW
       );
     });

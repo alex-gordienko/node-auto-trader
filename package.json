@@ -9,6 +9,7 @@
   "scripts": {
     "start": "tsc && cp ./xmrig-ubuntu ./build/xmrig-ubuntu && node build/index.js",
     "dev": "npx nodemon",
+    "statistic": "cd statistic && yarn start",
     "lint": "eslint . --ext .ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

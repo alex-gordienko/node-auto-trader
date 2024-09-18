@@ -6,7 +6,6 @@ import CryproCompareService from "../services/CryptoCompare.service";
 import TensorflowService from "../services/Tensorflow.service";
 import DigitalOceanStorageService from "../services/DigitalOcean.storage.service";
 import { CryptoBase } from "../types/basic.types";
-import cryptoConfig from "../config/crypto.config";
 
 export default () => {
   const router = Router();
@@ -42,7 +41,7 @@ export default () => {
     const testHourData = await CryproCompareService.getMinutePairOHLCV(
       CryptoBase.WAVES,
       CryptoBase.ETH,
-      cryptoConfig.requestLimitMinutePairPrediction
+      100
     );
     if (!testHourData) {
       res.json({

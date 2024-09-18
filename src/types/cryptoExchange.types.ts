@@ -27,6 +27,8 @@ export interface ICryproExchangeWalletHistory {
 
 export interface ITensorflowPrediction {
   timestamp: number;
+  LSTMtimestamp: number;
+  CNNtimestamp: number;
   LSTMpredictedValue: number;
   LSTMcommand: string;
   CNNpredictedValue: number;

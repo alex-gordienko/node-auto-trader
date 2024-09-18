@@ -2,7 +2,6 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const cryptoConfig = {
-
   useGPU: process.env.USE_GPU === "true" || false,
   // api-keys
   cryptoCompareApiKey: process.env.CRYPTO_COMPARE_API_KEY || "YOUR_API_KEY", // get currency rates
@@ -20,7 +19,8 @@ const cryptoConfig = {
   etheriumPrivateKey: process.env.ETHERIUM_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Etherium from Atomic
   wavesPrivateKey: process.env.WAVES_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Waves from Atomic
 
-  requestLimitMinutePairPrediction: Number(process.env.REQUEST_LIMIT_PREDICTION || 100),
+  shortTermMinuteWindowPrediction: Number(process.env.REQUEST_LIMIT_SHORT_TERM_PREDICTION || 5),
+  longTermMinuteWindowPrediction: Number(process.env.REQUEST_LIMIT_LONG_TERM_PREDICTION || 15),
   requestLimitMinutePairModelTraining: Number(process.env.REQUEST_LIMIT_TRAINING || 2000),
 
   autoPredictionInterval: {

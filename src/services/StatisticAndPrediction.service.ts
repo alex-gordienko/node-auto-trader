@@ -110,7 +110,7 @@ class StatisticAndPredictionService {
         const testMinuteData = await CryptoCompareService.getMinutePairOHLCV(
           CryptoBase.WAVES,
           CryptoBase.ETH,
-          cryptoConfig.requestLimitMinutePairPrediction
+          100
         );
 
         if (!testMinuteData) {

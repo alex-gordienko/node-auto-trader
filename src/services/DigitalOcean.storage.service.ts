@@ -61,6 +61,7 @@ class DigitalOceanStorageService {
           log(err, Colors.RED);
           log(`Error uploading data: ${data}`, Colors.RED);
         }
+        log(`Successfully uploaded ${input.Key}`)
       });
 
       const splittedEndpoint = config.endpoint.split("//");
