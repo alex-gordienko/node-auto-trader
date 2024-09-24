@@ -188,6 +188,28 @@ class TensorflowAI {
     log("[**] Long Term (LSTM) Model saved to file", Colors.GREEN);
   };
 
+  private prepareInputData(data: number[][], timeSteps: number): tfType.Tensor {
+    // Нормализация данных
+    const normalizedData = this.normalizeData(data);
+
+    // Подготовка входных данных для модели
+    const inputData = [];
+    for (let i = 0; i < normalizedData.length - timeSteps; i++) {
+      const x = normalizedData.slice(i, i + timeSteps);
+      inputData.push(x);
+    }
+
+    // Преобразование в тензор
+    return tf.tensor3d(inputData, [inputData.length, timeSteps, data[0].length]);
+  }
+
+  private normalizeData(data: number[][]): number[][] {
+    // Пример нормализации данных (может быть изменен в зависимости от требований)
+    const min = Math.min(...data.flat());
+    const max = Math.max(...data.flat());
+    return data.map((row) => row.map((value) => (value - min) / (max - min)));
+  }
+
   public trainModel = async (model: "minute" | "long-term", input: ICyptoCompareData[]): Promise<boolean> => {
     const modetToTrain = model === "minute" ? this.minuteModel : this.longTermModel;
     try {
@@ -200,13 +222,13 @@ class TensorflowAI {
       const batchSize = 64;
       const timeSteps =
         model === "minute" ? cryptoConfig.shortTermMinuteWindowPrediction : cryptoConfig.longTermMinuteWindowPrediction;
+      const data = input.map((d) => [d.time, d.open, d.high, d.low, d.close]);
 
       // Normalize the data
       const normalize = (data: number[], min: number[], max: number[]) => {
         return data.map((value, index) => (value - min[index]) / (max[index] - min[index]));
       };
 
-      const data = input.map((d) => [d.time, d.open, d.high, d.low, d.close]);
 
       const minValues = data.reduce(
         (acc, val) => val.map((v, i) => Math.min(v, acc[i])),
@@ -283,28 +305,6 @@ class TensorflowAI {
       return false;
     }
   };
-
-  private prepareInputData(data: number[][], timeSteps: number): tfType.Tensor {
-    // Нормализация данных
-    const normalizedData = this.normalizeData(data);
-
-    // Подготовка входных данных для модели
-    const inputData = [];
-    for (let i = 0; i < normalizedData.length - timeSteps; i++) {
-      const x = normalizedData.slice(i, i + timeSteps);
-      inputData.push(x);
-    }
-
-    // Преобразование в тензор
-    return tf.tensor3d(inputData, [inputData.length, timeSteps, data[0].length]);
-  }
-
-  private normalizeData(data: number[][]): number[][] {
-    // Пример нормализации данных (может быть изменен в зависимости от требований)
-    const min = Math.min(...data.flat());
-    const max = Math.max(...data.flat());
-    return data.map((row) => row.map((value) => (value - min) / (max - min)));
-  }
 
   public async predictNextPrices(input: ICyptoCompareData[]): Promise<ITensorflowPrediction[]> {
     if (!this.minuteModel || !this.longTermModel) {
@@ -408,9 +408,9 @@ class TensorflowAI {
       const now = format(new Date(result.timestamp), "dd/MM/yy HH:mm");
       const lstmDate = format(new Date(result.LSTMtimestamp), "dd/MM/yy HH:mm");
       const cnnDate = format(new Date(result.CNNtimestamp), "dd/MM/yy HH:mm");
-      const LSTMpredictedValue = result.LSTMpredictedValue;
+      const LSTMpredictedValue = result.LSTMpredictedValue.toFixed(7);
       const LSTMcommand = result.LSTMcommand;
-      const CNNpredictedValue = result.CNNpredictedValue;
+      const CNNpredictedValue = result.CNNpredictedValue.toFixed(7);
       const CNNcommand = result.CNNcommand;
 
       log(

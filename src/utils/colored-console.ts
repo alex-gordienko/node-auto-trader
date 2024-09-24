@@ -13,7 +13,7 @@ const log = (message: unknown, color?: Colors) => {
     if (color) {
         console.log(color, message, Colors.RESET);
     } else {
-        console.log(message);
+        console.log(message, Colors.RESET);
     }
 };
 

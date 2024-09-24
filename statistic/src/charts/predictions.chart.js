@@ -5,7 +5,7 @@ import {
   lineElementClasses,
   markElementClasses
 } from '@mui/x-charts/LineChart'
-import {format} from 'date-fns'
+import {format, addMinutes, isEqual, startOfMinute} from 'date-fns'
 
 import DigitalOceanService from "../services/DigitalOcean.storage.service";
 
@@ -17,8 +17,8 @@ const PredictionsChart = () => {
     const getData = async () => {
       try {
         setLoading(true);
-        const predictions = await DigitalOceanService.getTensorflowPredictionHistory();
-        const currency = await DigitalOceanService.getTradingHistory('WAVES-ETH-minute');
+        const predictions = (await DigitalOceanService.getTensorflowPredictionHistory()).slice(-2000);
+        const currency = (await DigitalOceanService.getTradingHistory('WAVES-ETH-minute')).slice(-3000);
 
         const today = new Date()
         const fourDaysAgo = new Date()
@@ -28,34 +28,37 @@ const PredictionsChart = () => {
         console.log(currency)
 
         const dataResponse = predictions.reduce((acc, item) => {
-          const realCurrency = currency.find((currency) =>  Math.floor(item.timestamp / 1000) * 1000 === currency.time * 1000) || {
-            time: item.timestamp,
-            high: 0,
-            low: 0,
-            open: 0,
-            volumefrom: 0,
-            volumeto: 0,
-            close: 0,
-            conversionType: 'null',
-            conversionSymbol: 'null'
-          }
+          const predictionTime = startOfMinute(new Date(item.timestamp))
 
-          if (!realCurrency.close) {
-            return acc;
-          }
+          const timeForLSTM = item.LSTMtimestamp ?
+            startOfMinute(new Date(item.LSTMtimestamp))
+            : startOfMinute(addMinutes(new Date(item.timestamp), 15))
+          
+          const timeForCNN = item.CNNtimestamp ?
+            startOfMinute(new Date(item.CNNtimestamp))
+            : startOfMinute(addMinutes(new Date(item.timestamp), 15))
 
-          if (item.LSTMpredictedValue > 0.001) {
+          const realCurrency = currency.find((currency) => isEqual(predictionTime, startOfMinute(new Date(currency.time * 1000))))
+
+          if (predictionTime < fourDaysAgo) {
             return acc
           }
 
+          if (!realCurrency?.close) {
+            return {
+              currencyData: acc.currencyData,
+              LSTMdata: [...acc.LSTMdata, { timestamp: timeForLSTM, lstmvalue: item.LSTMpredictedValue }],
+              CNNdata: [...acc.CNNdata, { timestamp: timeForCNN, cnnvalue: item.CNNpredictedValue }]
+            }
+          }
+
           return {
-            currencyData: [...acc.currencyData, {timestamp: realCurrency.time * 1000, value: realCurrency.close}],
-            LSTMdata: [...acc.LSTMdata, { timestamp: item.LSTMtimestamp, lstmvalue: item.LSTMpredictedValue }],
-            CNNdata: [...acc.CNNdata, { timestamp: item.CNNtimestamp, cnnvalue: item.CNNpredictedValue }]
+            currencyData: [...acc.currencyData, {timestamp: startOfMinute(new Date(realCurrency.time * 1000)), value: realCurrency.close}],
+            LSTMdata: [...acc.LSTMdata, { timestamp: timeForLSTM, lstmvalue: item.LSTMpredictedValue }],
+            CNNdata: [...acc.CNNdata, { timestamp: timeForCNN, cnnvalue: item.CNNpredictedValue }]
           }
         }, {currencyData: [], LSTMdata:[], CNNdata:[]});
 
-        console.log(dataResponse)
         setChartData(dataResponse);
       } catch (error) {
         console.error(error);
@@ -70,7 +73,7 @@ const PredictionsChart = () => {
   console.log([...chartData.currencyData, ...chartData.LSTMdata, ...chartData.CNNdata])
 
   return (
-    <Paper sx={{ display: 'flex', flexDirection: 'column', height: '600px' }}>
+    <Paper sx={{ display: 'flex', flexDirection: 'column', height: '800px' }}>
       <Box>
         <Typography variant="h4">Predictions</Typography>
       </Box>  
@@ -78,13 +81,18 @@ const PredictionsChart = () => {
         <LineChart
           loading={loading}
           width={1600}
-          height={600}
+          height={800}
           grid={{ vertical: true, horizontal: true }}
           dataset={[...chartData.currencyData, ...chartData.LSTMdata, ...chartData.CNNdata]}
           xAxis={[{
             dataKey: 'timestamp',
+            zoom: true,
             scaleType: 'time',
             valueFormatter: (date) => format(date, 'dd/MM HH:mm')
+          }]}
+          yAxis={[{
+            tickSize: 0.0000001,
+            tickInterval: 0.0000001
           }]}
           series={[
             {
@@ -99,14 +107,14 @@ const PredictionsChart = () => {
               dataKey: 'lstmvalue',
               id: 'LSTM',
               showMark: false,
-              valueFormatter: (value) => `${value?.toFixed(7)}`
+              valueFormatter: (lstmvalue) => `${lstmvalue?.toFixed(7)}`
             },
             {
               label: 'CNN prediction',
               dataKey: 'cnnvalue',
               id: 'CNN',
               showMark: false,
-              valueFormatter: (value) => `${value?.toFixed(7)}`
+              valueFormatter: (cnnvalue) => `${cnnvalue?.toFixed(7)}`
             }
           ]}
           sx={{
