@@ -29,8 +29,8 @@ const cryptoConfig = {
   },
 
   autoDatasetForMinuteModelUpdateInterval: {
-    units: (process.env.AUTO_DATASET_UPDATE_INTERVAL_UNITS || "minutes") as "hours" | "minutes",
-    interval: Number(process.env.AUTO_DATASET_UPDATE_INTERVAL || 10),
+    units: (process.env.AUTO_DATASET_UPDATE_INTERVAL_UNITS || "hours") as "hours" | "minutes",
+    interval: Number(process.env.AUTO_DATASET_UPDATE_INTERVAL || 11),
   },
 
   autoRetrainingMinuteModelInterval: {

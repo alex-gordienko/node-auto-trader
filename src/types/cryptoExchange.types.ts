@@ -27,18 +27,16 @@ export interface ICryproExchangeWalletHistory {
 
 export interface ITensorflowPrediction {
   timestamp: number;
-  LSTMtimestamp: number;
-  CNNtimestamp: number;
-  LSTMpredictedValue: number;
-  LSTMcommand: string;
-  CNNpredictedValue: number;
-  CNNcommand: string;
-}
+  lstm_timestamp: number;
 
-export interface ITensorflowPredictionHistory {
-  timestamp: number;
-  lstmPrediction: number;
-  cnnPrediction: number;
+  lstm_model_waves_eth_predicted_value: number;
+  lstm_model_waves_eth_command: string;
+  lstm_model_waves_usd_predicted_value: number;
+  lstm_model_waves_usd_command: string;
+  lstm_model_eth_usd_predicted_value: number;
+  lstm_model_eth_usd_command: string;
+
+  summary_command: string;
 }
 
 export interface ICryptoExchangeTransactionsHistory {

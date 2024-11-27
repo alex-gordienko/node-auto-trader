@@ -5,103 +5,78 @@ import { format } from "date-fns";
 
 import cryptoConfig from "../config/crypto.config";
 
-import { ICyptoCompareData } from "../types/cryptoCompare.types";
+import { ICyptoCompareData, IFormattedCurrencyHistory } from "../types/cryptoCompare.types";
 import { log, Colors } from "../utils/colored-console";
-import DigitalOceanStorageService from "./DigitalOcean.storage.service";
 import { ITensorflowPrediction } from "../types/cryptoExchange.types";
 
 // Import TensorFlow.js types
-
 // Dynamically import the appropriate TensorFlow.js backend
 const tf: typeof tfType = cryptoConfig.useGPU ? require("@tensorflow/tfjs-node-gpu") : require("@tensorflow/tfjs-node");
 
+type ModelPairType = "WAVES-ETH" | "WAVES-USD" | "ETH-USD";
+
 class TensorflowAI {
-  private readonly minuteModelLocalDir: string = `${__dirname}/../models/minute`;
-  private readonly longTermModelLocalDir: string = `${__dirname}/../models/long-term`;
-  private readonly minuteModelCloudDir = "models/minute";
-  private readonly longTermModelCloudDir = "models/long-term";
+  private readonly lstm_model_waves_eth_LocalDir: string = `${__dirname}/../models/lstm_model_waves_eth`;
+  // private readonly lstm_model_waves_eth_CloudDir = "models/lstm_model_waves_eth";
+
+  private readonly lstm_model_waves_usd_LocalDir: string = `${__dirname}/../models/lstm_model_waves_usd`;
+  // private readonly lstm_model_waves_usd_CloudDir = "models/lstm_model_waves_usd";
+
+  private readonly lstm_model_eth_usd_LocalDir: string = `${__dirname}/../models/lstm_model_eth_usd`;
+  // private readonly lstm_model_eth_usd_CloudDir = "models/lstm_model_eth_usd";
 
   private readonly splittedEndpoint = config.endpoint.split("//");
   private readonly baseURL = `${this.splittedEndpoint[0]}//${config.bucket}.${this.splittedEndpoint[1]}`;
 
-  // Model for prediction currency for the next minute in future
-  private minuteModel: tfType.LayersModel | null = null;
-  // Model for prediction currency for the next 5-15 minutes in future
-  private longTermModel: tfType.LayersModel | null = null;
+  // Model for prediction currency between two Coins
+  private lstm_model_waves_eth: tfType.LayersModel | null = null;
+
+  // Model for prediction ETH currency
+  private lstm_model_waves_usd: tfType.LayersModel | null = null;
+
+  // Model for prediction WAVES currency
+  private lstm_model_eth_usd: tfType.LayersModel | null = null;
 
   constructor() {
     log("[*] Initializing Tensorflow AI Service", Colors.GREEN);
 
-    this.loadModel();
+    this.loadModels();
   }
 
-  private createMinuteModel = () => {
-    const timeSteps = cryptoConfig.shortTermMinuteWindowPrediction;
-    const features = 5; // open, high, low, close
-
-    const input = tf.input({ shape: [timeSteps, features] });
-
-    const convLayer = tf.layers
-      .conv1d({ filters: 32, kernelSize: 3, activation: "relu", inputShape: [timeSteps, features] })
-      .apply(input);
-    const maxPoolLayer = tf.layers.maxPooling1d({ poolSize: 2 }).apply(convLayer);
-    const flattenLayer = tf.layers.flatten().apply(maxPoolLayer);
-    const denseLayer = tf.layers.dense({ units: 50, activation: "relu" }).apply(flattenLayer);
-
-    // Output for regression (predicting the currency value)
-    const regressionOutput = tf.layers
-      .dense({ units: 1, name: "regressionOutput" })
-      .apply(denseLayer) as tfType.SymbolicTensor;
-
-    // Output for classification (predicting the command)
-    const classificationOutput = tf.layers
-      .dense({ units: 3, activation: "softmax", name: "classificationOutput" })
-      .apply(denseLayer) as tfType.SymbolicTensor;
-
-    const model = tf.model({ inputs: input, outputs: [regressionOutput, classificationOutput] });
-
-    model.compile({
-      optimizer: tf.train.adam(0.02),
-      loss: {
-        regressionOutput: "meanSquaredError",
-        classificationOutput: "categoricalCrossentropy",
-      },
-      metrics: {
-        regressionOutput: "mse",
-        classificationOutput: "accuracy",
-      },
-    });
-
-    log("[**] New CNN model created for regression and classification", Colors.GREEN);
-
-    return model;
-  };
-
-  private createLongTermModel = () => {
+  private createLSTMmodel = () => {
     const timeSteps = cryptoConfig.longTermMinuteWindowPrediction;
-    const features = 5; // open, high, low, close
+    const features = 10; // time, open, high, low, close, volatility, price change, MA5, MA10, RSI14
 
     const input = tf.input({ shape: [timeSteps, features] });
 
+    // Convolutional Layer for feature extraction
+    const convLayer = tf.layers.conv1d({ filters: 64, kernelSize: 10, activation: "relu" }).apply(input);
+
+    // LSTM Layers
     const lstmLayer1 = tf.layers
-      .lstm({ units: 30, returnSequences: true, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
-      .apply(input);
+      .lstm({ units: 50, returnSequences: true, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
+      .apply(convLayer);
+    const dropout1 = tf.layers.dropout({ rate: 0.2 }).apply(lstmLayer1);
+
     const lstmLayer2 = tf.layers
-      .lstm({ units: 60, returnSequences: true, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
-      .apply(lstmLayer1);
+      .lstm({ units: 50, returnSequences: true, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
+      .apply(dropout1);
+    const dropout2 = tf.layers.dropout({ rate: 0.2 }).apply(lstmLayer2);
+
     const lstmLayer3 = tf.layers
-      .lstm({ units: 30, returnSequences: false, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
-      .apply(lstmLayer2);
+      .lstm({ units: 50, returnSequences: false, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
+      .apply(dropout2);
+    const dropout3 = tf.layers.dropout({ rate: 0.2 }).apply(lstmLayer3);
 
     // Output for regression (predicting the currency value)
     const regressionOutput = tf.layers
       .dense({ units: 1, name: "regressionOutput" })
-      .apply(lstmLayer3) as tfType.SymbolicTensor;
+      .apply(dropout3) as tfType.SymbolicTensor;
 
     // Output for classification (predicting the command)
     const classificationOutput = tf.layers
       .dense({ units: 3, activation: "softmax", name: "classificationOutput" })
-      .apply(lstmLayer3) as tfType.SymbolicTensor;
+      .apply(dropout3) as tfType.SymbolicTensor;
 
     const model = tf.model({ inputs: input, outputs: [regressionOutput, classificationOutput] });
 
@@ -122,12 +97,33 @@ class TensorflowAI {
     return model;
   };
 
-  private loadModel = async () => {
-    try {
-      log("[*] Loading CNN model from pre-saved file", Colors.GREEN);
+  private async loadModel(modelPair: ModelPairType): Promise<tfType.LayersModel> {
+    const modelLocalDir =
+      modelPair === "WAVES-ETH"
+        ? this.lstm_model_waves_eth_LocalDir
+        : modelPair === "WAVES-USD"
+        ? this.lstm_model_waves_usd_LocalDir
+        : this.lstm_model_eth_usd_LocalDir;
 
-      const minuteModel = await tf.loadLayersModel(`${this.baseURL}/${this.minuteModelCloudDir}/model.json`);
-      minuteModel.compile({
+    const modelPath = `file://${modelLocalDir}/model.json`;
+
+    try {
+      const model = await tf.loadLayersModel(modelPath);
+      log(`[**] Model ${modelPair} loaded from file`, Colors.GREEN);
+      return model;
+    } catch (error) {
+      log(`Error loading model ${modelPair}: ${error}`, Colors.RED);
+      throw error;
+    }
+  }
+
+  private loadModels = async () => {
+    try {
+      log("[*] Loading LSTM model for WAVES-ETH currency from pre-saved file", Colors.GREEN);
+
+      // const model = await tf.loadLayersModel(`${this.baseURL}/${this.lstm_model_waves_eth_CloudDir}/model.json`);
+      const model = await this.loadModel("WAVES-ETH");
+      model.compile({
         optimizer: tf.train.adam(0.02),
         loss: {
           regressionOutput: "meanSquaredError",
@@ -139,20 +135,21 @@ class TensorflowAI {
         },
       });
 
-      this.minuteModel = minuteModel;
+      this.lstm_model_waves_eth = model;
 
-      log("[**] CNN Model loaded from pre-saved file", Colors.GREEN);
+      log("[**] LSTM model for WAVES-ETH currency has been loaded from pre-saved file", Colors.GREEN);
     } catch (error) {
-      log(`Error while loading CNN model: ${error}`, Colors.RED);
+      log(`Error while loading LSTM model for WAVES-ETH currency: ${error}`, Colors.RED);
       log("[**] Creating new model", Colors.GREEN);
-      this.minuteModel = this.createMinuteModel();
+      this.lstm_model_waves_eth = this.createLSTMmodel();
     }
 
     try {
-      log("[*] Loading LSTM model from pre-saved file", Colors.GREEN);
+      log("[*] Loading LSTM model for WAVES-USD currency from pre-saved file", Colors.GREEN);
 
-      const longTermModel = await tf.loadLayersModel(`${this.baseURL}/${this.longTermModelCloudDir}/model.json`);
-      longTermModel.compile({
+      // const model = await tf.loadLayersModel(`${this.baseURL}/${this.lstm_model_waves_usd_CloudDir}/model.json`);
+      const model = await this.loadModel("WAVES-USD");
+      model.compile({
         optimizer: tf.train.adam(0.02),
         loss: {
           regressionOutput: "meanSquaredError",
@@ -164,33 +161,66 @@ class TensorflowAI {
         },
       });
 
-      this.longTermModel = longTermModel;
+      this.lstm_model_waves_usd = model;
 
-      log("[**] LSTM Model loaded from pre-saved file", Colors.GREEN);
+      log("[**] LSTM model for WAVES-USD currency has been loaded from pre-saved file", Colors.GREEN);
     } catch (error) {
-      log(`Error while loading LSTM model: ${error}`, Colors.RED);
+      log(`Error while loading LSTM model for WAVES-USD currency: ${error}`, Colors.RED);
       log("[**] Creating new model", Colors.GREEN);
-      this.longTermModel = this.createLongTermModel();
+      this.lstm_model_waves_usd = this.createLSTMmodel();
+    }
+
+    try {
+      log("[*] Loading LSTM model for ETH-USD currency from pre-saved file", Colors.GREEN);
+
+      // const model = await tf.loadLayersModel(`${this.baseURL}/${this.lstm_model_eth_usd_CloudDir}/model.json`);
+      const model = await this.loadModel("ETH-USD");
+      model.compile({
+        optimizer: tf.train.adam(0.02),
+        loss: {
+          regressionOutput: "meanSquaredError",
+          classificationOutput: "categoricalCrossentropy",
+        },
+        metrics: {
+          regressionOutput: "mse",
+          classificationOutput: "accuracy",
+        },
+      });
+
+      this.lstm_model_eth_usd = model;
+
+      log("[**] LSTM model for ETH-USD currency has been loaded from pre-saved file", Colors.GREEN);
+    } catch (error) {
+      log(`Error while loading LSTM model for ETH-USD currency: ${error}`, Colors.RED);
+      log("[**] Creating new model", Colors.GREEN);
+      this.lstm_model_eth_usd = this.createLSTMmodel();
     }
   };
 
-  private saveMinuteModel = async () => {
-    fse.ensureDirSync(this.minuteModelLocalDir);
-    await this.minuteModel?.save("file://" + this.minuteModelLocalDir);
-    await DigitalOceanStorageService.saveModel(this.minuteModelLocalDir, this.minuteModelCloudDir);
-    log("[**] Minute Model (CNN) saved to file", Colors.GREEN);
-  };
+  private saveModel = async (modelPair: ModelPairType) => {
+    const model =
+      modelPair === "WAVES-ETH"
+        ? this.lstm_model_waves_eth
+        : modelPair === "WAVES-USD"
+        ? this.lstm_model_waves_usd
+        : this.lstm_model_eth_usd;
 
-  private saveLongTermModel = async () => {
-    fse.ensureDirSync(this.minuteModelLocalDir);
-    await this.longTermModel?.save("file://" + this.longTermModelLocalDir);
-    await DigitalOceanStorageService.saveModel(this.longTermModelLocalDir, this.longTermModelCloudDir);
-    log("[**] Long Term (LSTM) Model saved to file", Colors.GREEN);
+    const modelLocalDir =
+      modelPair === "WAVES-ETH"
+        ? this.lstm_model_waves_eth_LocalDir
+        : modelPair === "WAVES-USD"
+        ? this.lstm_model_waves_usd_LocalDir
+        : this.lstm_model_eth_usd_LocalDir;
+
+    fse.ensureDirSync(modelLocalDir);
+
+    await model?.save("file://" + modelLocalDir);
+    log(`[**] Model ${modelPair} saved to file`, Colors.GREEN);
   };
 
   private prepareInputData(data: number[][], timeSteps: number): tfType.Tensor {
     // Нормализация данных
-    const normalizedData = this.normalizeData(data);
+    const normalizedData = data;
 
     // Подготовка входных данных для модели
     const inputData = [];
@@ -203,43 +233,141 @@ class TensorflowAI {
     return tf.tensor3d(inputData, [inputData.length, timeSteps, data[0].length]);
   }
 
-  private normalizeData(data: number[][]): number[][] {
-    // Пример нормализации данных (может быть изменен в зависимости от требований)
-    const min = Math.min(...data.flat());
-    const max = Math.max(...data.flat());
-    return data.map((row) => row.map((value) => (value - min) / (max - min)));
+  private normalize(data: number[][]): { normalizedData: number[][]; mean: number[]; std: number[] } {
+    const timeFeature = data.map((row) => row[0]);
+    const priceFeatures = data.map((row) => row.slice(1));
+
+    // Normalize time feature
+    const meanTime = timeFeature.reduce((a, b) => a + b, 0) / timeFeature.length;
+    const stdTime = Math.sqrt(
+      timeFeature.map((x) => Math.pow(x - meanTime, 2)).reduce((a, b) => a + b) / timeFeature.length
+    );
+    const normalizedTime = timeFeature.map((value) => (value - meanTime) / stdTime);
+
+    // Normalize price features
+    const meanPrices = Array(priceFeatures[0].length).fill(0);
+    const stdPrices = Array(priceFeatures[0].length).fill(0);
+
+    for (const row of priceFeatures) {
+      row.forEach((value, index) => {
+        meanPrices[index] += value;
+      });
+    }
+    meanPrices.forEach((value, index, array) => {
+      array[index] = value / priceFeatures.length;
+    });
+
+    for (const row of priceFeatures) {
+      row.forEach((value, index) => {
+        stdPrices[index] += Math.pow(value - meanPrices[index], 2);
+      });
+    }
+    stdPrices.forEach((value, index, array) => {
+      array[index] = Math.sqrt(value / priceFeatures.length);
+    });
+
+    const normalizedPriceFeatures = priceFeatures.map((row) =>
+      row.map((value, index) => (value - meanPrices[index]) / stdPrices[index])
+    );
+
+    const normalizedData = normalizedTime.map((time, index) => [time, ...normalizedPriceFeatures[index]]);
+
+    // Concatenate normalized time and price features
+    return { normalizedData, mean: [meanTime, ...meanPrices], std: [stdTime, ...stdPrices] };
   }
 
-  public trainModel = async (model: "minute" | "long-term", input: ICyptoCompareData[]): Promise<boolean> => {
-    const modetToTrain = model === "minute" ? this.minuteModel : this.longTermModel;
+  private denormalize = (value: number, mean: number, std: number): number => {
+    return value * std + mean;
+  };
+
+  private calculateSMA(data: number[], period: number): number[] {
+    const sma = [];
+    for (let i = 0; i < data.length; i++) {
+      if (i < period - 1) {
+        sma.push(0);
+      } else {
+        const sum = data.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
+        sma.push(sum / period);
+      }
+    }
+    return sma;
+  }
+
+  private calculateRSI(data: number[], period: number): number[] {
+    const rsi = [];
+    let gains = 0;
+    let losses = 0;
+
+    for (let i = 1; i < data.length; i++) {
+      const change = data[i] - data[i - 1];
+      if (change > 0) {
+        gains += change;
+      } else {
+        losses -= change;
+      }
+
+      if (i >= period) {
+        const avgGain = gains / period;
+        const avgLoss = losses / period;
+        const rs = avgGain / avgLoss;
+        rsi.push(100 - 100 / (1 + rs));
+
+        // Update gains and losses for the next period
+        const prevChange = data[i - period + 1] - data[i - period];
+        if (prevChange > 0) {
+          gains -= prevChange;
+        } else {
+          losses += prevChange;
+        }
+      } else {
+        rsi.push(0);
+      }
+    }
+    return rsi;
+  }
+
+  private prepareDataset = (
+    data: Pick<ICyptoCompareData, "time" | "high" | "low" | "open" | "close">[]
+  ): { normalizedData: number[][]; mean: number[]; std: number[] } => {
+    const closes = data.map((d) => d.close);
+    const ma5 = this.calculateSMA(closes, 5);
+    const ma10 = this.calculateSMA(closes, 10);
+    const rsi14 = this.calculateRSI(closes, 14);
+
+    const dataset = data.map((d, i) => [
+      d.time,
+      d.open,
+      d.high,
+      d.low,
+      d.close,
+      (d.high - d.low) / d.low,
+      (d.close - d.open) / d.open,
+      ma5[i] || 0, // MA5
+      ma10[i] || 0, // MA10
+      rsi14[i] || 0, // RSI14
+    ]);
+
+    return this.normalize(dataset);
+  };
+
+  public trainModel = async (modelPair: ModelPairType, input: ICyptoCompareData[]): Promise<boolean> => {
+    const modelToTrain =
+      modelPair === "WAVES-ETH"
+        ? this.lstm_model_waves_eth
+        : modelPair === "WAVES-USD"
+        ? this.lstm_model_waves_usd
+        : this.lstm_model_eth_usd;
+
     try {
-      if (!modetToTrain) {
+      if (!modelToTrain) {
         console.error("Model not initialized");
         return false;
       }
 
       const epochs = 50;
       const batchSize = 64;
-      const timeSteps =
-        model === "minute" ? cryptoConfig.shortTermMinuteWindowPrediction : cryptoConfig.longTermMinuteWindowPrediction;
-      const data = input.map((d) => [d.time, d.open, d.high, d.low, d.close]);
-
-      // Normalize the data
-      const normalize = (data: number[], min: number[], max: number[]) => {
-        return data.map((value, index) => (value - min[index]) / (max[index] - min[index]));
-      };
-
-
-      const minValues = data.reduce(
-        (acc, val) => val.map((v, i) => Math.min(v, acc[i])),
-        [Infinity, Infinity, Infinity, Infinity, Infinity]
-      );
-      const maxValues = data.reduce(
-        (acc, val) => val.map((v, i) => Math.max(v, acc[i])),
-        [-Infinity, -Infinity, -Infinity, -Infinity, -Infinity]
-      );
-
-      const normalizedData = data.map((d) => normalize(d, minValues, maxValues));
+      const timeSteps = cryptoConfig.longTermMinuteWindowPrediction;
+      const { normalizedData } = this.prepareDataset(input);
 
       // Prepare the data for LSTM
       const xs = [];
@@ -267,70 +395,91 @@ class TensorflowAI {
       }
 
       // Corrected tensor shape
-      const xsTensor = tf.tensor3d(xs, [xs.length, timeSteps, 5]);
+      const xsTensor = tf.tensor3d(xs, [xs.length, timeSteps, normalizedData[0].length]);
       const ysRegressionTensor = tf.tensor2d(ysRegression, [ysRegression.length, 1]); // Single value for regression
       const ysClassificationTensor = tf.tensor2d(ysClassification, [ysClassification.length, 3]); // One-hot encoded for classification
 
-      log(`[**] Training ${model} model`, Colors.GREEN);
+      log(`[**] Training ${modelPair} model`, Colors.GREEN);
 
-      console.time(`${model}: Training Time`);
+      console.time(`${modelPair}: Training Time`);
 
-      await modetToTrain.fit(
+      await modelToTrain.fit(
         xsTensor,
         { regressionOutput: ysRegressionTensor, classificationOutput: ysClassificationTensor },
         {
           epochs,
           batchSize,
           callbacks: {
-            onEpochEnd: (epoch, logs) => {
-              if (logs && logs.loss < 0.2) {
-                // Early stopping condition
-                this.minuteModel!.stopTraining = true;
-              }
-            },
             onTrainEnd: () => {
               log("[**] Training completed", Colors.GREEN);
-              console.timeEnd(`${model}: Training Time`);
+              console.timeEnd(`${modelPair}: Training Time`);
             },
           },
         }
       );
 
-      model === "minute" ? await this.saveMinuteModel() : await this.saveLongTermModel();
+      await this.saveModel(modelPair);
 
-      log(`[**] ${model} Model training completed`, Colors.GREEN);
+      log(`[**] ${modelPair} Model training completed`, Colors.GREEN);
       return true;
     } catch (error) {
+      console.timeEnd(`${modelPair}: Training Time`);
       console.error("Error during training:", error);
       return false;
     }
   };
 
-  public async predictNextPrices(input: ICyptoCompareData[]): Promise<ITensorflowPrediction[]> {
-    if (!this.minuteModel || !this.longTermModel) {
-      throw new Error("Models not loaded");
+  private async getModelPrediction(
+    model: tfType.LayersModel,
+    input: Pick<ICyptoCompareData, "time" | "high" | "low" | "open" | "close">[],
+    threshold: number
+  ): Promise<{ timestamp: number; predictedValue: number; command: "Buy" | "Sell" | "Hold" }> {
+    const timeSteps = cryptoConfig.longTermMinuteWindowPrediction;
+
+    const { normalizedData, mean, std } = this.prepareDataset(input);
+
+    const xsTensor = this.prepareInputData(normalizedData, timeSteps);
+
+    const [regressionPredictions, classificationPredictions] = model.predict(xsTensor) as tfType.Tensor[];
+
+    const predictedValues = (await regressionPredictions.array()) as number[][];
+
+    const predictedCommands = (await classificationPredictions.array()) as number[][];
+
+    const predictedValue = this.denormalize(predictedValues[predictedValues.length - 1][0], mean[4], std[4]); // Use the 'close' price index for denormalization
+
+    // Predict for 15 minutes using LSTM Model
+    const lstmIndex = xsTensor.shape[0] - 1;
+    const lstmTime = (input[input.length - 1].time + 15 * 60) * 1000; // Predicting for the next 15 minutes
+    const lstmActualValue = input[input.length - 1].close; // Last known price
+
+    const [buy, sell, hold] = predictedCommands[lstmIndex];
+
+    let command: "Buy" | "Sell" | "Hold";
+
+    const profitWhenBuy = (predictedValue - lstmActualValue) / lstmActualValue;
+
+    const profitWhenSell = (lstmActualValue - predictedValue) / lstmActualValue;
+
+    if (buy > sell && buy > hold && profitWhenBuy > threshold) {
+      command = "Buy";
+    } else if (sell > buy && sell > hold && profitWhenSell > threshold) {
+      command = "Sell";
+    } else {
+      command = "Hold";
     }
 
-    const data = input.map((d) => [d.time, d.open, d.high, d.low, d.close]);
-    const timeStepsShort = cryptoConfig.shortTermMinuteWindowPrediction;
-    const timeStepsLong = cryptoConfig.longTermMinuteWindowPrediction;
+    return {
+      timestamp: lstmTime,
+      predictedValue,
+      command,
+    };
+  }
 
-    const xsShortTensor = this.prepareInputData(data, timeStepsShort);
-    const xsLongTensor = this.prepareInputData(data, timeStepsLong);
-
-    // Make predictions by CNN Model
-    const [CNNregressionPredictions, CNNclassificationPredictions] = this.minuteModel.predict(
-      xsShortTensor
-    ) as tfType.Tensor[];
-    const CNNregressionPredictionsArray = (await CNNregressionPredictions.array()) as number[][];
-    const CNNclassificationPredictionsArray = (await CNNclassificationPredictions.array()) as number[][];
-
-    // Make predictions by LSTM Model
-    const [LSTMregressionPredictions, LSTMclassificationPredictions] = this.longTermModel.predict(
-      xsLongTensor
-    ) as tfType.Tensor[];
-    const LSTMregressionPredictionsArray = (await LSTMregressionPredictions.array()) as number[][];
-    const LSTMclassificationPredictionsArray = (await LSTMclassificationPredictions.array()) as number[][];
+  public async predictNextPrices(input: IFormattedCurrencyHistory[]): Promise<ITensorflowPrediction[]> {
+    if (!this.lstm_model_waves_eth || !this.lstm_model_waves_usd || !this.lstm_model_eth_usd) {
+      throw new Error("Models not loaded");
+    }
 
     // Define a threshold for Buy/Sell/Hold decision
     const threshold = 0.0000001;
@@ -339,82 +488,90 @@ class TensorflowAI {
 
     const feeAdjustedThreshold = threshold + networkFeePercentage;
 
+    const lstm_model_waves_eth_prediction = await this.getModelPrediction(
+      this.lstm_model_waves_eth,
+      input.map((data) => ({
+        time: data.time,
+        open: data.waves_eth_open,
+        high: data.waves_eth_high,
+        low: data.waves_eth_low,
+        close: data.waves_eth_close,
+      })),
+      feeAdjustedThreshold
+    );
+
+    const lstm_model_waves_usd_prediction = await this.getModelPrediction(
+      this.lstm_model_waves_usd,
+      input.map((data) => ({
+        time: data.time,
+        open: data.waves_usd_open,
+        high: data.waves_usd_high,
+        low: data.waves_usd_low,
+        close: data.waves_usd_close,
+      })),
+      feeAdjustedThreshold
+    );
+
+    const lstm_model_eth_usd_prediction = await this.getModelPrediction(
+      this.lstm_model_eth_usd,
+      input.map((data) => ({
+        time: data.time,
+        open: data.eth_usd_open,
+        high: data.eth_usd_high,
+        low: data.eth_usd_low,
+        close: data.eth_usd_close,
+      })),
+      feeAdjustedThreshold
+    );
+
     // Interpret predictions
     const results: ITensorflowPrediction[] = [];
 
-    // Get min and max values for denormalization
-    const minValues = data.reduce(
-      (acc, val) => val.map((v, i) => Math.min(v, acc[i])),
-      [Infinity, Infinity, Infinity, Infinity, Infinity]
-    );
-    const maxValues = data.reduce(
-      (acc, val) => val.map((v, i) => Math.max(v, acc[i])),
-      [-Infinity, -Infinity, -Infinity, -Infinity, -Infinity]
-    );
-
-    // Function to denormalize values
-    const denormalize = (value: number, min: number, max: number) => {
-      return value * (max - min) + min;
-    };
-
-    // Predict for 5 minutes using CNN Model
-    const cnnIndex = xsShortTensor.shape[0] - 1;
-    const cnnTime = (input[input.length - 1].time + 5 * 60) * 1000; // Predicting for the next 5 minutes
-    const cnnActualValue = input[input.length - 1].close; // Last known price
-    const cnnPredictedValue = denormalize(CNNregressionPredictionsArray[cnnIndex][0], minValues[4], maxValues[4]);
-
-    const [CNNbuy, CNNsell, CNNhold] = CNNclassificationPredictionsArray[cnnIndex];
-    let cnnCommand: string;
-    const cnnProfitWhenBuy = (cnnPredictedValue - cnnActualValue) / cnnActualValue;
-    const cnnProfitWhenSell = (cnnActualValue - cnnPredictedValue) / cnnActualValue;
-    if (CNNbuy > CNNsell && CNNbuy > CNNhold && cnnProfitWhenBuy > feeAdjustedThreshold) {
-      cnnCommand = "Buy";
-    } else if (CNNsell > CNNbuy && CNNsell > CNNhold && cnnProfitWhenSell > feeAdjustedThreshold) {
-      cnnCommand = "Sell";
-    } else {
-      cnnCommand = "Hold";
-    }
-
-    // Predict for 15 minutes using LSTM Model
-    const lstmIndex = xsLongTensor.shape[0] - 1;
-    const lstmTime = (input[input.length - 1].time + 15 * 60) * 1000; // Predicting for the next 15 minutes
-    const lstmActualValue = input[input.length - 1].close; // Last known price
-    const lstmPredictedValue = denormalize(LSTMregressionPredictionsArray[lstmIndex][0], minValues[4], maxValues[4]);
-
-    const [LSTMbuy, LSTMsell, LSTMhold] = LSTMclassificationPredictionsArray[lstmIndex];
-    let lstmCommand: string;
-    const lstmProfitWhenBuy = (lstmPredictedValue - lstmActualValue) / lstmActualValue;
-    const lstmProfitWhenSell = (lstmActualValue - lstmPredictedValue) / lstmActualValue;
-    if (LSTMbuy > LSTMsell && LSTMbuy > LSTMhold && lstmProfitWhenBuy > feeAdjustedThreshold) {
-      lstmCommand = "Buy";
-    } else if (LSTMsell > LSTMbuy && LSTMsell > LSTMhold && lstmProfitWhenSell > feeAdjustedThreshold) {
-      lstmCommand = "Sell";
-    } else {
-      lstmCommand = "Hold";
-    }
-
     results.push({
       timestamp: Math.floor(Date.now() / 1000) * 1000,
-      CNNtimestamp: cnnTime,
-      CNNpredictedValue: cnnPredictedValue,
-      CNNcommand: cnnCommand,
-      LSTMtimestamp: lstmTime,
-      LSTMpredictedValue: lstmPredictedValue,
-      LSTMcommand: lstmCommand,
+      lstm_timestamp: lstm_model_waves_eth_prediction.timestamp,
+
+      lstm_model_waves_eth_predicted_value: lstm_model_waves_eth_prediction.predictedValue,
+      lstm_model_waves_eth_command: lstm_model_waves_eth_prediction.command,
+
+      lstm_model_waves_usd_predicted_value: lstm_model_waves_usd_prediction.predictedValue,
+      lstm_model_waves_usd_command: lstm_model_waves_usd_prediction.command,
+
+      lstm_model_eth_usd_predicted_value: lstm_model_eth_usd_prediction.predictedValue,
+      lstm_model_eth_usd_command: lstm_model_eth_usd_prediction.command,
+
+      summary_command: "Hold",
     });
 
     results.forEach((result) => {
-      const currentCurrency = data[data.length - 1][4];
+      const currentCurrency_waves_eth = input[input.length - 1].waves_eth_close.toFixed(7);
+      const currentCurrency_waves_usd = input[input.length - 1].waves_usd_close.toFixed(7);
+      const currentCurrency_eth_usd = input[input.length - 1].eth_usd_close.toFixed(7);
+
       const now = format(new Date(result.timestamp), "dd/MM/yy HH:mm");
-      const lstmDate = format(new Date(result.LSTMtimestamp), "dd/MM/yy HH:mm");
-      const cnnDate = format(new Date(result.CNNtimestamp), "dd/MM/yy HH:mm");
-      const LSTMpredictedValue = result.LSTMpredictedValue.toFixed(7);
-      const LSTMcommand = result.LSTMcommand;
-      const CNNpredictedValue = result.CNNpredictedValue.toFixed(7);
-      const CNNcommand = result.CNNcommand;
+      const lstmDate = format(new Date(result.lstm_timestamp), "dd/MM/yy HH:mm");
+
+      const predictedValue_waves_eth = result.lstm_model_waves_eth_predicted_value.toFixed(7);
+      const command_waves_eth = result.lstm_model_waves_eth_command;
+
+      const predictedValue_waves_usd = result.lstm_model_waves_usd_predicted_value.toFixed(7);
+      const command_waves_usd = result.lstm_model_waves_usd_command;
+
+      const predictedValue_eth_usd = result.lstm_model_eth_usd_predicted_value.toFixed(7);
+      const command_eth_usd = result.lstm_model_eth_usd_command;
 
       log(
-        `[**] ${now} Current currency: ${currentCurrency}. CNN: ${CNNcommand}: ${CNNpredictedValue} at ${cnnDate}, LSTM: ${LSTMcommand}: ${LSTMpredictedValue} at ${lstmDate}`,
+        `[**] ${now}  WAVES-ETH Current currency: ${currentCurrency_waves_eth}. LSTM: ${command_waves_eth}: ${predictedValue_waves_eth} at ${lstmDate}`,
+        Colors.YELLOW
+      );
+
+      log(
+        `[**] ${now} WAVES-USD Current currency: ${currentCurrency_waves_usd}. LSTM: ${command_waves_usd}: ${predictedValue_waves_usd} at ${lstmDate}`,
+        Colors.YELLOW
+      );
+
+      log(
+        `[**] ${now} ETH-USD Current currency: ${currentCurrency_eth_usd}. LSTM: ${command_eth_usd}: ${predictedValue_eth_usd} at ${lstmDate}`,
         Colors.YELLOW
       );
     });

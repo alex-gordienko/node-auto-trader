@@ -54,8 +54,8 @@ const PredictionsChart = () => {
 
           return {
             currencyData: [...acc.currencyData, {timestamp: startOfMinute(new Date(realCurrency.time * 1000)), value: realCurrency.close}],
-            LSTMdata: [...acc.LSTMdata, { timestamp: timeForLSTM, lstmvalue: item.LSTMpredictedValue }],
-            CNNdata: [...acc.CNNdata, { timestamp: timeForCNN, cnnvalue: item.CNNpredictedValue }]
+            LSTMdata: [...acc.LSTMdata, { timestamp: timeForLSTM, lstm: item.LSTMpredictedValue }],
+            CNNdata: [...acc.CNNdata, { timestamp: timeForCNN, cnn: item.CNNpredictedValue }]
           }
         }, {currencyData: [], LSTMdata:[], CNNdata:[]});
 
@@ -104,14 +104,14 @@ const PredictionsChart = () => {
             },
             {
               label: 'LSTM prediction',
-              dataKey: 'lstmvalue',
+              dataKey: 'lstm',
               id: 'LSTM',
               showMark: false,
               valueFormatter: (lstmvalue) => `${lstmvalue?.toFixed(7)}`
             },
             {
               label: 'CNN prediction',
-              dataKey: 'cnnvalue',
+              dataKey: 'cnn',
               id: 'CNN',
               showMark: false,
               valueFormatter: (cnnvalue) => `${cnnvalue?.toFixed(7)}`

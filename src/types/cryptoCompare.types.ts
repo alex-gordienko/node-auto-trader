@@ -27,3 +27,21 @@ export interface ICyptoCompareData {
   conversionType: string;
   conversionSymbol: string;
 }
+
+export interface IFormattedCurrencyHistory {
+  time: number;
+  waves_usd_open: number;
+  waves_usd_close: number;
+  waves_usd_high: number;
+  waves_usd_low: number;
+
+  eth_usd_open: number;
+  eth_usd_close: number;
+  eth_usd_high: number;
+  eth_usd_low: number;
+
+  waves_eth_open: number;
+  waves_eth_close: number;
+  waves_eth_high: number;
+  waves_eth_low: number;
+}
