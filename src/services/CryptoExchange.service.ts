@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { AxiosError } from "axios";
 import cryptoConfig from "../config/crypto.config";
 import { log, Colors } from "../utils/colored-console";
 import WavesWalletService from "./WavesWallet.service";
@@ -9,7 +9,6 @@ import { TransferTransaction } from "@waves/ts-types";
 import { WithId, WithProofs } from "@waves/waves-transactions";
 import { ICryptoExchangeResponse } from "../types/cryptoExchange.types";
 
-
 class CryptoExchangeService {
   private readonly changeNOW_base_url: string = "https://api.changenow.io/v1";
   private readonly WAVES_wallet: string = cryptoConfig.wavesWallet;
@@ -19,8 +18,6 @@ class CryptoExchangeService {
   constructor() {
     log("[*] Initializing Crypto Exchange Service", Colors.MAGENTA);
     this.getAvailableTradePairs();
-    this.minimalExchangeAmount(CryptoExchangeCoins.WAVES, CryptoExchangeCoins.ETH);
-    this.minimalExchangeAmount(CryptoExchangeCoins.ETH, CryptoExchangeCoins.WAVES);
   }
 
   public getAvailableTradePairs = async (): Promise<boolean> => {
@@ -31,31 +28,30 @@ class CryptoExchangeService {
         },
       });
 
-      const trxCurrencies = response.data.filter(
-        (pair: string) => pair.includes(CryptoExchangeCoins.WAVES) && pair.includes(CryptoExchangeCoins.ETH)
-      );
+      const availablePairs: CryptoExchangePairs[] = [];
+      const unavailablePairs: CryptoExchangePairs[] = [];
 
-      log(`[**] Available trade pairs: ${trxCurrencies.join(", ")}`, Colors.MAGENTA);
+      for (const cryptoExchangePair of Object.values(CryptoExchangePairs)) {
+        const isAvailable = response.data.find((pair: string) => pair === cryptoExchangePair);
+        if (!isAvailable) {
+          unavailablePairs.push(cryptoExchangePair);
+        } else {
+          availablePairs.push(cryptoExchangePair);
 
-      const isWAVESETHAvailable = response.data.find((pair: string) => pair === CryptoExchangePairs.WAVES_ETH);
+          const from = cryptoExchangePair.split("_")[0] as CryptoExchangeCoins;
+          const to = cryptoExchangePair.split("_")[1] as CryptoExchangeCoins;
 
-      const isETHWAVESAvailable = response.data.find((pair: string) => pair === CryptoExchangePairs.ETH_WAVES);
-
-      if (!isWAVESETHAvailable) {
-        log("WAVES-ETH pair is not available", Colors.RED);
-        return false;
+          await this.minimalExchangeAmount(from, to);
+          await this.minimalExchangeAmount(to, from);
+        }
       }
 
-      if (!isETHWAVESAvailable) {
-        log("ETH-WAVES pair is not available", Colors.RED);
-        return false;
-      }
-
-      log("[**] WAVES-ETH and ETH-WAVES tradings are available", Colors.MAGENTA);
+      availablePairs.length && log(`[**] ${availablePairs.join(", ")} tradings are available`, Colors.MAGENTA);
+      unavailablePairs.length && log(`[**] ${unavailablePairs.join(", ")} tradings are unavailable`, Colors.RED);
       return true;
     } catch (error) {
       log("Error getting available trade pairs", Colors.RED);
-      log(error, Colors.RED);
+      log((error as AxiosError).response?.data, Colors.RED);
       return false;
     }
   };
@@ -72,8 +68,8 @@ class CryptoExchangeService {
       log(`[**] Minimal exchange amount for ${from}-${to} pair is ${minimalAmount}`, Colors.MAGENTA);
       return minimalAmount as number;
     } catch (error) {
-      log("Error getting minimal exchange amount", Colors.RED);
-      log(error, Colors.RED);
+      log(`Error getting minimal exchange amount for ${from}-${to}`, Colors.RED);
+      log((error as AxiosError).response?.data, Colors.RED);
       return 0;
     }
   };

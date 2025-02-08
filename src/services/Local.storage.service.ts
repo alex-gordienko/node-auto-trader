@@ -13,7 +13,7 @@ import {
   ICryptoExchangeTransactionsHistory,
   ITensorflowPrediction,
 } from "../types/cryptoExchange.types";
-import { CryptoBase } from "../types/basic.types";
+import { CryptoBase, CryptoPairs } from "../types/basic.types";
 import EtheriumWalletService from "./EtheriumWallet.service";
 import WavesWalletService from "./WavesWallet.service";
 
@@ -42,6 +42,18 @@ class LocalStorageService {
     this.storagePath = path.join(`${__dirname}/..`, "Storage");
     if (!fs.existsSync(this.storagePath)) {
       fs.mkdirSync(this.storagePath, { recursive: true });
+    }
+    if (!fs.existsSync(path.join(this.storagePath, "datasets"))) { 
+      fs.mkdirSync(path.join(this.storagePath, "datasets"), { recursive: true });
+    }
+    if (!fs.existsSync(path.join(this.storagePath, "predictions"))) { 
+      fs.mkdirSync(path.join(this.storagePath, "predictions"), { recursive: true });
+    }
+    if (!fs.existsSync(path.join(this.storagePath, "balances"))) { 
+      fs.mkdirSync(path.join(this.storagePath, "balances"), { recursive: true });
+    }
+    if (!fs.existsSync(path.join(this.storagePath, "transactions"))) { 
+      fs.mkdirSync(path.join(this.storagePath, "transactions"), { recursive: true });
     }
 
     log("[*] Initializing Local Storage Service", Colors.BLUE);
@@ -75,10 +87,10 @@ class LocalStorageService {
   };
 
   public pushTradingHistory = async (
-    name: "WAVES-ETH" | "WAVES-USD" | "ETH-USD",
+    name: CryptoPairs,
     data: ICyptoCompareHistoryMinutePair
   ): Promise<string | null> => {
-    const fileName = name + "-trading-history.json";
+    const fileName = `datasets/${name}-trading-history.json`;
 
     const newDataMap = new Map<number, ICyptoCompareData>(data.Data.Data.map((d) => [d.time, d]));
 
@@ -97,16 +109,13 @@ class LocalStorageService {
       savedDataMap = newDataMap;
     }
 
-    log(`[**] New rows count: ${newRowsCount}`, Colors.BLUE);
-    log(`[**] Total rows count: ${savedDataMap?.size || 0}`, Colors.BLUE);
+    log(`[**] ${name}: New rows count: ${newRowsCount}. Total rows count: ${savedDataMap?.size || 0}`, Colors.BLUE);
 
     return this.uploadFile(fileName, JSON.stringify(Array.from(savedDataMap)));
   };
 
-  public getTradingHistory = async (
-    historyName: "WAVES-ETH" | "WAVES-USD" | "ETH-USD"
-  ): Promise<ICyptoCompareData[]> => {
-    const fileName = `${historyName}-trading-history.json`;
+  public getTradingHistory = async (historyName: CryptoPairs): Promise<ICyptoCompareData[]> => {
+    const fileName = `datasets/${historyName}-trading-history.json`;
 
     const result = await this.getSavedFile<ICyptoCompareData>(fileName);
 
@@ -117,8 +126,11 @@ class LocalStorageService {
     return Array.from(result.values());
   };
 
-  public pushTensorflowPredictionHistory =  async (prediction: ITensorflowPrediction[]): Promise<string | null> => {
-    const fileName = `WAVES-ETH-prediction-history.json`;
+  public pushTensorflowPredictionHistory = async (
+    pair: CryptoPairs,
+    prediction: ITensorflowPrediction
+  ): Promise<string | null> => {
+    const fileName = `predictions/${pair}-prediction-history.json`;
 
     let savedDataMap = await this.getSavedFile<ITensorflowPrediction>(fileName);
 
@@ -127,15 +139,13 @@ class LocalStorageService {
       savedDataMap = new Map<number, ITensorflowPrediction>();
     }
 
-    prediction.forEach((prediction) => {
-      savedDataMap.set(prediction.timestamp, prediction);
-    });
+    savedDataMap.set(prediction.timestamp, prediction);
 
     return this.uploadFile(fileName, JSON.stringify(Array.from(savedDataMap)));
   };
 
-  public getTensorflowPredictionHistory = async (): Promise<ITensorflowPrediction[]> => {
-    const fileName = `WAVES-ETH-prediction-history.json`;
+  public getTensorflowPredictionHistory = async (pair: CryptoPairs): Promise<ITensorflowPrediction[]> => {
+    const fileName = `predictions/${pair}-prediction-history.json`;
 
     const result = await this.getSavedFile<ITensorflowPrediction>(fileName);
 
@@ -150,7 +160,7 @@ class LocalStorageService {
     coin: CryptoBase,
     data: ICryproExchangeWalletHistory
   ): Promise<string | null> => {
-    const fileName = `${coin}-wallet-balance-history.json`;
+    const fileName = `balances/${coin}-wallet-balance-history.json`;
 
     let savedDataMap = await this.getSavedFile<ICryproExchangeWalletHistory>(fileName);
 
@@ -165,7 +175,7 @@ class LocalStorageService {
   };
 
   public getWalletBalanceHistory = async (coin: CryptoBase): Promise<ICryproExchangeWalletHistory[]> => {
-    const fileName = `${coin}-wallet-balance-history.json`;
+    const fileName = `balances/${coin}-wallet-balance-history.json`;
 
     const result = await this.getSavedFile<ICryproExchangeWalletHistory>(fileName);
 
@@ -178,7 +188,7 @@ class LocalStorageService {
 
   public pushTransactionsHistory = async (props: TransactionHistoryProps): Promise<string | null> => {
     try {
-      const fileName = `${props.coins[0]}-${props.coins[1]}-transactions-history.json`;
+      const fileName = `transactions/${props.coins[0]}-${props.coins[1]}-transactions-history.json`;
 
       const ethToWave = props.from === CryptoBase.ETH && props.to === CryptoBase.WAVES;
 
@@ -225,7 +235,7 @@ class LocalStorageService {
   };
 
   public getTransactionsHistory = async (coins: CryptoBase[]): Promise<ICryptoExchangeTransactionsHistory[]> => {
-    const fileName = `${coins[0]}-${coins[1]}-transactions-history.json`;
+    const fileName = `transactions/${coins[0]}-${coins[1]}-transactions-history.json`;
 
     const result = await this.getSavedFile<ICryptoExchangeTransactionsHistory>(fileName);
 

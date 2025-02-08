@@ -6,9 +6,10 @@ import CryptoCompareService from "../services/CryptoCompare.service";
 import TensorflowService from "../services/Tensorflow.service";
 // import DigitalOceanStorageService from "../services/DigitalOcean.storage.service";
 import DigitalOceanStorageService from "../services/Local.storage.service";
-import { CryptoBase } from "../types/basic.types";
-import { mergeDatasets } from "../utils/mergeDatasets";
+import { CryptoBase, CryptoPairs } from "../types/basic.types";
 import { Colors, log } from "../utils/colored-console";
+import { ICyptoCompareData } from "../types/cryptoCompare.types";
+import cryptoConfig from "../config/crypto.config";
 
 export default () => {
   const router = Router();
@@ -22,49 +23,51 @@ export default () => {
   });
 
   router.get(routes.REST.LEARN_TENSORFLOW, async (req, res) => {
-    let modelName = req.query.modelName as "WAVES-ETH" | "WAVES-USD" | "ETH-USD";
+    const trainingDataset: Map<CryptoPairs, ICyptoCompareData[]> = new Map();
 
-    console.log("modelName", modelName);
+    for (const pair of Object.values(CryptoPairs)) {
+      const trainData = await DigitalOceanStorageService.getTradingHistory(pair);
 
-    if (!modelName || !["WAVES-ETH", "WAVES-USD", "ETH-USD"].includes(modelName)) {
-      modelName = "WAVES-ETH";
+      if (!trainData) {
+        log(`No trading history for ${pair}`, Colors.RED);
+        continue;
+      }
+
+      trainingDataset.set(pair, trainData);
     }
-    const trainData = await DigitalOceanStorageService.getTradingHistory(modelName);
 
-    log(`[**] Retraining models with dataset length = ${trainData.length}`, Colors.GREEN);
-
-    TensorflowService.trainModel(modelName, trainData);
+    TensorflowService.trainAllModels(trainingDataset);
 
     res.json({
       status: "ok",
-      modelName,
       message: "Training model's started",
-      datasetLength: trainData.length,
-      last10DatasetElements: trainData.slice(-10),
+      ...Object.fromEntries(
+        Object.values(CryptoPairs).map((pair) => [
+          pair,
+          trainingDataset.has(pair) ? "Training started" : "No training data",
+        ])
+      ),
     });
   });
 
   router.get(routes.REST.GET_PREDICTION, async (req, res) => {
-    const trainDataWAVES_ETH = await CryptoCompareService.getMinutePairOHLCV(CryptoBase.WAVES, CryptoBase.ETH, 50);
+    const trainingDataset: Map<CryptoPairs, ICyptoCompareData[]> = new Map();
 
-    const trainDataWAVES_USD = await CryptoCompareService.getMinutePairOHLCV(CryptoBase.WAVES, CryptoBase.USD, 50);
-    const trainDataETH_USD = await CryptoCompareService.getMinutePairOHLCV(CryptoBase.ETH, CryptoBase.USD, 50);
+    for (const pair of Object.values(CryptoPairs)) {
+      const base = pair.split("-")[0] as CryptoBase;
+      const to = pair.split("-")[1] as CryptoBase;
 
-    if (!trainDataWAVES_ETH || !trainDataWAVES_USD || !trainDataETH_USD) {
-      res.json({
-        status: "error",
-        message: "Error getting test data",
-      });
-      return;
+      const trainData = await CryptoCompareService.getMinutePairOHLCV(base, to, 200);
+
+      if (!trainData) {
+        log(`No trading history for ${pair}`, Colors.RED);
+        continue;
+      }
+
+      trainingDataset.set(pair, trainData.Data.Data);
     }
 
-    const formattedTrainData = mergeDatasets([
-      trainDataWAVES_ETH.Data.Data,
-      trainDataWAVES_USD.Data.Data,
-      trainDataETH_USD.Data.Data,
-    ]);
-
-    const predictionByMinute = await TensorflowService.predictNextPrices(formattedTrainData);
+    const predictionByMinute = await TensorflowService.predictNextPrices(trainingDataset);
 
     res.json({
       status: "ok",
@@ -74,33 +77,32 @@ export default () => {
   });
 
   router.get(routes.REST.SAVE_HISTORY, async (req, res) => {
-    const trainDataWAVES_ETH = await CryptoCompareService.getMinutePairOHLCV(CryptoBase.WAVES, CryptoBase.ETH, 2000);
-    const trainDataWAVES_USD = await CryptoCompareService.getMinutePairOHLCV(CryptoBase.WAVES, CryptoBase.USD, 2000);
+    const links: Map<CryptoPairs, string> = new Map();
 
-    const trainDataETH_USD = await CryptoCompareService.getMinutePairOHLCV(CryptoBase.ETH, CryptoBase.USD, 2000);
+    for (const pair of Object.values(CryptoPairs)) {
+      const base = pair.split("-")[0] as CryptoBase;
+      const to = pair.split("-")[1] as CryptoBase;
 
-    if (!trainDataWAVES_ETH || !trainDataWAVES_USD || !trainDataETH_USD) {
-      res.json({
-        status: "error",
-        message: "Error getting train data",
-      });
-      return;
+      const tradingHistory = await CryptoCompareService.getMinutePairOHLCV(
+        base,
+        to,
+        cryptoConfig.requestLimitMinutePairModelTraining
+      );
+
+      if (!tradingHistory) {
+        log(`No trading history for ${pair}`, Colors.RED);
+        continue;
+      }
+
+      const link = await DigitalOceanStorageService.pushTradingHistory(pair, tradingHistory);
+
+      links.set(pair, link || "Not saved");
     }
-
-    const WAVES_ETH_HistoryLink = await DigitalOceanStorageService.pushTradingHistory(
-      "WAVES-ETH",
-      trainDataWAVES_ETH
-    );
-
-    const WAVES_USD_HistoryLink = await DigitalOceanStorageService.pushTradingHistory("WAVES-USD", trainDataWAVES_USD);
-    const ETH_USD_HistoryLink = await DigitalOceanStorageService.pushTradingHistory("ETH-USD", trainDataETH_USD);
 
     res.json({
       status: "ok",
       message: "Trading history saved",
-      WAVES_ETH_HistoryLink,
-      WAVES_USD_HistoryLink,
-      ETH_USD_HistoryLink,
+      ...Object.fromEntries(links),
     });
   });
 

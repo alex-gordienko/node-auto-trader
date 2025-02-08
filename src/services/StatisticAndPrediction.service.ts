@@ -9,9 +9,9 @@ import TensorflowService from "./Tensorflow.service";
 import cryptoConfig from "../config/crypto.config";
 import { Colors, log } from "../utils/colored-console";
 import repeatEvent from "../utils/timer";
-import { CryptoBase, CryptoExchangeCoins } from "../types/basic.types";
+import { CryptoBase, CryptoExchangeCoins, CryptoPairs } from "../types/basic.types";
 import { ICryproExchangeWalletHistory } from "../types/cryptoExchange.types";
-import { mergeDatasets } from "../utils/mergeDatasets";
+import { ICyptoCompareData } from "../types/cryptoCompare.types";
 
 class StatisticAndPredictionService {
   private isAbleToTrade: boolean = true;
@@ -59,39 +59,29 @@ class StatisticAndPredictionService {
     const intervalForMinutes = cryptoConfig.autoDatasetForMinuteModelUpdateInterval.interval;
 
     log(
-      `[**] Training dataset for Minute Model would be auto-updated each ${intervalForMinutes} ${unitsForMinutes}`,
+      `[**] Training datasets for Models would be auto-updated each ${intervalForMinutes} ${unitsForMinutes}`,
       Colors.WHITE
     );
 
     this.historyMinutePairTimer = repeatEvent({
       callback: async () => {
-        const tradingHistoryWAVES_USD = await CryptoCompareService.getMinutePairOHLCV(
-          CryptoBase.WAVES,
-          CryptoBase.USD,
-          cryptoConfig.requestLimitMinutePairModelTraining
-        );
+        for (const pair of Object.values(CryptoPairs)) {
+          const base = pair.split("-")[0] as CryptoBase;
+          const to = pair.split("-")[1] as CryptoBase;
 
-        const tradingHistoryETH_USD = await CryptoCompareService.getMinutePairOHLCV(
-          CryptoBase.ETH,
-          CryptoBase.USD,
-          cryptoConfig.requestLimitMinutePairModelTraining
-        );
+          const tradingHistory = await CryptoCompareService.getMinutePairOHLCV(
+            base,
+            to,
+            cryptoConfig.requestLimitMinutePairModelTraining
+          );
 
-        const tradingHistoryWAVES_ETH = await CryptoCompareService.getMinutePairOHLCV(
-          CryptoBase.WAVES,
-          CryptoBase.ETH,
-          cryptoConfig.requestLimitMinutePairModelTraining
-        );
+          if (!tradingHistory) {
+            log(`No trading history for ${pair}`, Colors.RED);
+            continue;
+          }
 
-        if (!tradingHistoryWAVES_USD || !tradingHistoryETH_USD || !tradingHistoryWAVES_ETH) {
-          log("No trading history", Colors.RED);
-          return;
+          await DigitalOceanStorageService.pushTradingHistory(pair, tradingHistory);
         }
-
-        await DigitalOceanStorageService.pushTradingHistory("WAVES-USD", tradingHistoryWAVES_USD);
-        await DigitalOceanStorageService.pushTradingHistory("ETH-USD", tradingHistoryETH_USD);
-
-        await DigitalOceanStorageService.pushTradingHistory("WAVES-ETH", tradingHistoryWAVES_ETH);
       },
       units: unitsForMinutes,
       interval: intervalForMinutes,
@@ -102,21 +92,18 @@ class StatisticAndPredictionService {
     const unitsForMinutes = cryptoConfig.autoRetrainingMinuteModelInterval.units;
     const intervalForMinutes = cryptoConfig.autoRetrainingMinuteModelInterval.interval;
 
-    log(`[**] Minute Model would be auto-updated each ${intervalForMinutes} ${unitsForMinutes}`, Colors.GREEN);
+    log(`[**] Models would be automatically re-trained each ${intervalForMinutes} ${unitsForMinutes}`, Colors.GREEN);
 
     this.retrainingMinuteModelTimer = repeatEvent({
       callback: async () => {
         this.isAbleToTrade = false;
-        const trainDataWAVES_ETH = await DigitalOceanStorageService.getTradingHistory("WAVES-ETH");
 
-        const trainDataWAVES_USD = await DigitalOceanStorageService.getTradingHistory("WAVES-USD");
-        const trainDataETH_USD = await DigitalOceanStorageService.getTradingHistory("ETH-USD");
+        for (const pair of Object.values(CryptoPairs)) {
+          const trainData = await DigitalOceanStorageService.getTradingHistory(pair);
+          log(`[**] Retraining models with dataset length = ${trainData.length}`, Colors.GREEN);
+          await TensorflowService.trainModel(pair, trainData);
+        }
 
-        log(`[**] Retraining models with dataset length = ${trainDataWAVES_ETH.length}`, Colors.GREEN);
-
-        await TensorflowService.trainModel("WAVES-ETH", trainDataWAVES_ETH);
-        await TensorflowService.trainModel("WAVES-USD", trainDataWAVES_USD);
-        await TensorflowService.trainModel("ETH-USD", trainDataETH_USD);
         this.isAbleToTrade = true;
       },
       units: unitsForMinutes,
@@ -131,85 +118,81 @@ class StatisticAndPredictionService {
 
     this.tradingTimer = repeatEvent({
       callback: async () => {
-        const trainDataWAVES_ETH = await CryptoCompareService.getMinutePairOHLCV(CryptoBase.WAVES, CryptoBase.ETH, 200);
+        const trainingDataset: Map<CryptoPairs, ICyptoCompareData[]> = new Map();
 
-        const trainDataWAVES_USD = await CryptoCompareService.getMinutePairOHLCV(CryptoBase.WAVES, CryptoBase.USD, 200);
-        const trainDataETH_USD = await CryptoCompareService.getMinutePairOHLCV(CryptoBase.ETH, CryptoBase.USD, 200);
+        for (const pair of Object.values(CryptoPairs)) {
+          const base = pair.split("-")[0] as CryptoBase;
+          const to = pair.split("-")[1] as CryptoBase;
 
-        if (!trainDataWAVES_ETH || !trainDataWAVES_USD || !trainDataETH_USD) {
-          log("No trading history", Colors.RED);
-          return;
+          const trainData = await CryptoCompareService.getMinutePairOHLCV(base, to, 200);
+
+          if (!trainData) {
+            log(`No trading history for ${pair}`, Colors.RED);
+            continue;
+          }
+
+          trainingDataset.set(pair, trainData.Data.Data);
         }
 
-        const formattedTrainData = mergeDatasets([
-          trainDataWAVES_ETH.Data.Data,
-          trainDataWAVES_USD.Data.Data,
-          trainDataETH_USD.Data.Data,
-        ]);
+        const predictionByMinute = await TensorflowService.predictNextPrices(trainingDataset);
 
-        const predictionByMinute = await TensorflowService.predictNextPrices(formattedTrainData);
+        for (const predictionMap of predictionByMinute) {
+          const [pair, prediction] = predictionMap;
 
-        if (!predictionByMinute) {
-          log("Prediction by Minute model: No prediction", Colors.RED);
-          return;
-        }
+          await DigitalOceanStorageService.pushTensorflowPredictionHistory(pair, prediction);
 
-        await DigitalOceanStorageService.pushTensorflowPredictionHistory(predictionByMinute);
+          // making swipe due to prediction (THE MOST IMPORTANT PART)
+          if (cryptoConfig.environment === "production") {
+            const currentPrice = prediction.current_value;
+            const predictedPrice = prediction.predicted_value;
 
-        // const currentPrice_WAVES_USD = formattedTrainData[formattedTrainData.length - 1].waves_usd_close;
-        // const currentPrice_ETH_USD = formattedTrainData[formattedTrainData.length - 1].eth_usd_close;
-        const currentPrice_WAVES_ETH = formattedTrainData[formattedTrainData.length - 1].waves_eth_close;
-        
-        const predictedPrice = predictionByMinute[0].lstm_model_waves_eth_predicted_value;
+            await this.possibleProfit(prediction.predicted_command, currentPrice, predictedPrice);
 
-        await this.possibleProfit(predictionByMinute[0].summary_command, currentPrice_WAVES_ETH, predictedPrice);
+            const ETHBalance = await EtheriumWalletService.getBalance();
+            const WAVESBalance = await WavesWalletService.getBalance();
 
-        const ETHBalance = await EtheriumWalletService.getBalance();
-        const WAVESBalance = await WavesWalletService.getBalance();
+            if (!this.isAbleToTrade) {
+              log(`[**] Cannot trade now, because models are retraining`, Colors.RED);
+              return;
+            } else if (prediction.predicted_command === "Buy") {
+              // The lowest amount of ETH (~$15)
+              if (ETHBalance >= 0.0056) {
+                log(`[**] Buying WAVES`, Colors.GREEN);
+                const transaction = await CryptoExchangeService.changeETHtoWAVES();
 
-        // making swipe due to prediction (THE MOST IMPORTANT PART)
-        if (cryptoConfig.environment === "production") {
-          if (!this.isAbleToTrade) {
-            log(`[**] Cannot trade now, because models are retraining`, Colors.RED);
-            return;
-          } else if (predictionByMinute[0].summary_command === "Buy") {
-            // The lowest amount of ETH (~$15)
-            if (ETHBalance >= 0.0056) {
-              log(`[**] Buying WAVES`, Colors.GREEN);
-              const transaction = await CryptoExchangeService.changeETHtoWAVES();
+                if (transaction) {
+                  await DigitalOceanStorageService.pushTransactionsHistory({
+                    from: CryptoBase.ETH,
+                    to: CryptoBase.WAVES,
+                    coins: [CryptoBase.ETH, CryptoBase.WAVES],
+                    exchangeAPIResponse: transaction.exchangeAPIresponse,
+                    transactionResponse: transaction.ethTransaction,
+                  });
+                }
+              } else {
+                log(`[**] Cannot buy WAVES, because ETH amount is too low (${ETHBalance})`, Colors.RED);
+              }
+            } else if (prediction.predicted_command === "Sell") {
+              // The lowest amount of WAVES (~$15)
+              if (WAVESBalance >= 14.423) {
+                log(`[**] Buying ETH`, Colors.GREEN);
+                const transaction = await CryptoExchangeService.changeWAVEStoETH();
 
-              if (transaction) {
-                await DigitalOceanStorageService.pushTransactionsHistory({
-                  from: CryptoBase.ETH,
-                  to: CryptoBase.WAVES,
-                  coins: [CryptoBase.ETH, CryptoBase.WAVES],
-                  exchangeAPIResponse: transaction.exchangeAPIresponse,
-                  transactionResponse: transaction.ethTransaction,
-                });
+                if (transaction) {
+                  await DigitalOceanStorageService.pushTransactionsHistory({
+                    from: CryptoBase.WAVES,
+                    to: CryptoBase.ETH,
+                    coins: [CryptoBase.ETH, CryptoBase.WAVES],
+                    exchangeAPIResponse: transaction.exchangeAPIresponse,
+                    transactionResponse: transaction.wavesTransaction,
+                  });
+                }
+              } else {
+                log(`[**] Cannot buy ETH, because WAVES amount is too low (${WAVESBalance})`, Colors.RED);
               }
             } else {
-              log(`[**] Cannot buy WAVES, because ETH amount is too low (${ETHBalance})`, Colors.RED);
+              log(`[**] No action`, Colors.YELLOW);
             }
-          } else if (predictionByMinute[0].summary_command === "Sell") {
-            // The lowest amount of WAVES (~$15)
-            if (WAVESBalance >= 14.423) {
-              log(`[**] Buying ETH`, Colors.GREEN);
-              const transaction = await CryptoExchangeService.changeWAVEStoETH();
-
-              if (transaction) {
-                await DigitalOceanStorageService.pushTransactionsHistory({
-                  from: CryptoBase.WAVES,
-                  to: CryptoBase.ETH,
-                  coins: [CryptoBase.ETH, CryptoBase.WAVES],
-                  exchangeAPIResponse: transaction.exchangeAPIresponse,
-                  transactionResponse: transaction.wavesTransaction,
-                });
-              }
-            } else {
-              log(`[**] Cannot buy ETH, because WAVES amount is too low (${WAVESBalance})`, Colors.RED);
-            }
-          } else {
-            log(`[**] No action`, Colors.YELLOW);
           }
         }
       },

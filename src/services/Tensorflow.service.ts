@@ -1,46 +1,39 @@
 import fse from "fs-extra";
-import config from "../config/digitalOcean.config";
 import type * as tfType from "@tensorflow/tfjs-node";
 import { format } from "date-fns";
 
 import cryptoConfig from "../config/crypto.config";
 
-import { ICyptoCompareData, IFormattedCurrencyHistory } from "../types/cryptoCompare.types";
-import { log, Colors } from "../utils/colored-console";
+import { ICyptoCompareData } from "../types/cryptoCompare.types";
+import { log, Colors, getRandomEnumValue } from "../utils/colored-console";
 import { ITensorflowPrediction } from "../types/cryptoExchange.types";
+import { CryptoPairs } from "../types/basic.types";
 
 // Import TensorFlow.js types
 // Dynamically import the appropriate TensorFlow.js backend
 const tf: typeof tfType = cryptoConfig.useGPU ? require("@tensorflow/tfjs-node-gpu") : require("@tensorflow/tfjs-node");
 
-type ModelPairType = "WAVES-ETH" | "WAVES-USD" | "ETH-USD";
-
 class TensorflowAI {
-  private readonly lstm_model_waves_eth_LocalDir: string = `${__dirname}/../models/lstm_model_waves_eth`;
-  // private readonly lstm_model_waves_eth_CloudDir = "models/lstm_model_waves_eth";
+  private modelDirectory: string = `${__dirname}/../models/lstm_models`;
 
-  private readonly lstm_model_waves_usd_LocalDir: string = `${__dirname}/../models/lstm_model_waves_usd`;
-  // private readonly lstm_model_waves_usd_CloudDir = "models/lstm_model_waves_usd";
-
-  private readonly lstm_model_eth_usd_LocalDir: string = `${__dirname}/../models/lstm_model_eth_usd`;
-  // private readonly lstm_model_eth_usd_CloudDir = "models/lstm_model_eth_usd";
-
-  private readonly splittedEndpoint = config.endpoint.split("//");
-  private readonly baseURL = `${this.splittedEndpoint[0]}//${config.bucket}.${this.splittedEndpoint[1]}`;
-
-  // Model for prediction currency between two Coins
-  private lstm_model_waves_eth: tfType.LayersModel | null = null;
-
-  // Model for prediction ETH currency
-  private lstm_model_waves_usd: tfType.LayersModel | null = null;
-
-  // Model for prediction WAVES currency
-  private lstm_model_eth_usd: tfType.LayersModel | null = null;
+  private modelsMap: Map<CryptoPairs, tfType.LayersModel> = new Map();
 
   constructor() {
     log("[*] Initializing Tensorflow AI Service", Colors.GREEN);
 
     this.loadModels();
+
+    this.createModelDirectory();
+  }
+
+  private createModelDirectory() {
+    if (!fse.existsSync(this.modelDirectory)) {
+      fse.mkdirSync(this.modelDirectory, { recursive: true });
+    }
+  }
+
+  public generateModelName(pair: CryptoPairs): string {
+    return `lstm_model_${pair}`;
   }
 
   private createLSTMmodel = () => {
@@ -97,15 +90,9 @@ class TensorflowAI {
     return model;
   };
 
-  private async loadModel(modelPair: ModelPairType): Promise<tfType.LayersModel> {
-    const modelLocalDir =
-      modelPair === "WAVES-ETH"
-        ? this.lstm_model_waves_eth_LocalDir
-        : modelPair === "WAVES-USD"
-        ? this.lstm_model_waves_usd_LocalDir
-        : this.lstm_model_eth_usd_LocalDir;
-
-    const modelPath = `file://${modelLocalDir}/model.json`;
+  private async loadModel(modelPair: CryptoPairs): Promise<tfType.LayersModel> {
+    const modelName = this.generateModelName(modelPair);
+    const modelPath = `file://${this.modelDirectory}/${modelName}/model.json`;
 
     try {
       const model = await tf.loadLayersModel(modelPath);
@@ -118,103 +105,51 @@ class TensorflowAI {
   }
 
   private loadModels = async () => {
-    try {
-      log("[*] Loading LSTM model for WAVES-ETH currency from pre-saved file", Colors.GREEN);
+    for (const pair of Object.values(CryptoPairs)) {
+      try {
+        log(`[*] Loading LSTM model for ${pair} currency from pre-saved file`, Colors.GREEN);
 
-      // const model = await tf.loadLayersModel(`${this.baseURL}/${this.lstm_model_waves_eth_CloudDir}/model.json`);
-      const model = await this.loadModel("WAVES-ETH");
-      model.compile({
-        optimizer: tf.train.adam(0.02),
-        loss: {
-          regressionOutput: "meanSquaredError",
-          classificationOutput: "categoricalCrossentropy",
-        },
-        metrics: {
-          regressionOutput: "mse",
-          classificationOutput: "accuracy",
-        },
-      });
+        const model = await this.loadModel(pair);
+        model.compile({
+          optimizer: tf.train.adam(0.02),
+          loss: {
+            regressionOutput: "meanSquaredError",
+            classificationOutput: "categoricalCrossentropy",
+          },
+          metrics: {
+            regressionOutput: "mse",
+            classificationOutput: "accuracy",
+          },
+        });
 
-      this.lstm_model_waves_eth = model;
+        this.modelsMap.set(pair, model);
 
-      log("[**] LSTM model for WAVES-ETH currency has been loaded from pre-saved file", Colors.GREEN);
-    } catch (error) {
-      log(`Error while loading LSTM model for WAVES-ETH currency: ${error}`, Colors.RED);
-      log("[**] Creating new model", Colors.GREEN);
-      this.lstm_model_waves_eth = this.createLSTMmodel();
-    }
+        log(`[**] LSTM model for ${pair} currency has been loaded from pre-saved file`, Colors.GREEN);
+      } catch (error) {
+        log(`Error while loading LSTM model for ${pair} currency: ${error}`, Colors.RED);
+        log("[**] Creating new model", Colors.GREEN);
 
-    try {
-      log("[*] Loading LSTM model for WAVES-USD currency from pre-saved file", Colors.GREEN);
+        const model = this.createLSTMmodel();
 
-      // const model = await tf.loadLayersModel(`${this.baseURL}/${this.lstm_model_waves_usd_CloudDir}/model.json`);
-      const model = await this.loadModel("WAVES-USD");
-      model.compile({
-        optimizer: tf.train.adam(0.02),
-        loss: {
-          regressionOutput: "meanSquaredError",
-          classificationOutput: "categoricalCrossentropy",
-        },
-        metrics: {
-          regressionOutput: "mse",
-          classificationOutput: "accuracy",
-        },
-      });
-
-      this.lstm_model_waves_usd = model;
-
-      log("[**] LSTM model for WAVES-USD currency has been loaded from pre-saved file", Colors.GREEN);
-    } catch (error) {
-      log(`Error while loading LSTM model for WAVES-USD currency: ${error}`, Colors.RED);
-      log("[**] Creating new model", Colors.GREEN);
-      this.lstm_model_waves_usd = this.createLSTMmodel();
-    }
-
-    try {
-      log("[*] Loading LSTM model for ETH-USD currency from pre-saved file", Colors.GREEN);
-
-      // const model = await tf.loadLayersModel(`${this.baseURL}/${this.lstm_model_eth_usd_CloudDir}/model.json`);
-      const model = await this.loadModel("ETH-USD");
-      model.compile({
-        optimizer: tf.train.adam(0.02),
-        loss: {
-          regressionOutput: "meanSquaredError",
-          classificationOutput: "categoricalCrossentropy",
-        },
-        metrics: {
-          regressionOutput: "mse",
-          classificationOutput: "accuracy",
-        },
-      });
-
-      this.lstm_model_eth_usd = model;
-
-      log("[**] LSTM model for ETH-USD currency has been loaded from pre-saved file", Colors.GREEN);
-    } catch (error) {
-      log(`Error while loading LSTM model for ETH-USD currency: ${error}`, Colors.RED);
-      log("[**] Creating new model", Colors.GREEN);
-      this.lstm_model_eth_usd = this.createLSTMmodel();
+        this.modelsMap.set(pair, model);
+      }
     }
   };
 
-  private saveModel = async (modelPair: ModelPairType) => {
-    const model =
-      modelPair === "WAVES-ETH"
-        ? this.lstm_model_waves_eth
-        : modelPair === "WAVES-USD"
-        ? this.lstm_model_waves_usd
-        : this.lstm_model_eth_usd;
+  private saveModel = async (modelPair: CryptoPairs) => {
+    const model = this.modelsMap.get(modelPair);
 
-    const modelLocalDir =
-      modelPair === "WAVES-ETH"
-        ? this.lstm_model_waves_eth_LocalDir
-        : modelPair === "WAVES-USD"
-        ? this.lstm_model_waves_usd_LocalDir
-        : this.lstm_model_eth_usd_LocalDir;
+    if (!model) {
+      log(`[**] Model ${modelPair} not found`, Colors.RED);
+      return;
+    }
 
-    fse.ensureDirSync(modelLocalDir);
+    const modelName = this.generateModelName(modelPair);
+    const modelPath = `${this.modelDirectory}/${modelName}`;
 
-    await model?.save("file://" + modelLocalDir);
+    fse.ensureDirSync(modelPath);
+
+    await model?.save("file://" + modelPath);
     log(`[**] Model ${modelPair} saved to file`, Colors.GREEN);
   };
 
@@ -350,22 +285,25 @@ class TensorflowAI {
     return this.normalize(dataset);
   };
 
-  public trainModel = async (modelPair: ModelPairType, input: ICyptoCompareData[]): Promise<boolean> => {
-    const modelToTrain =
-      modelPair === "WAVES-ETH"
-        ? this.lstm_model_waves_eth
-        : modelPair === "WAVES-USD"
-        ? this.lstm_model_waves_usd
-        : this.lstm_model_eth_usd;
+  public async trainAllModels(input: Map<CryptoPairs, ICyptoCompareData[]>): Promise<boolean> { 
+    for (const [pair, data] of input) {
+      await this.trainModel(pair, data);
+    }
+
+    return true;
+  }
+
+  public trainModel = async (modelPair: CryptoPairs, input: ICyptoCompareData[]): Promise<boolean> => {
+    const modelToTrain = this.modelsMap.get(modelPair);
+
+    if (!modelToTrain) {
+      log(`[**] Model ${modelPair} not found`, Colors.RED);
+      return false;
+    }
 
     try {
-      if (!modelToTrain) {
-        console.error("Model not initialized");
-        return false;
-      }
-
       const epochs = 50;
-      const batchSize = 64;
+      const batchSize = 128;
       const timeSteps = cryptoConfig.longTermMinuteWindowPrediction;
       const { normalizedData } = this.prepareDataset(input);
 
@@ -476,103 +414,72 @@ class TensorflowAI {
     };
   }
 
-  public async predictNextPrices(input: IFormattedCurrencyHistory[]): Promise<ITensorflowPrediction[]> {
-    if (!this.lstm_model_waves_eth || !this.lstm_model_waves_usd || !this.lstm_model_eth_usd) {
-      throw new Error("Models not loaded");
+  public async predictNextPrices(
+    input: Map<CryptoPairs, ICyptoCompareData[]>
+  ): Promise<Map<CryptoPairs, ITensorflowPrediction>> {
+    const results: Map<CryptoPairs, ITensorflowPrediction> = new Map();
+
+    for (const pair of Object.values(CryptoPairs)) {
+      try {
+        const model = await this.modelsMap.get(pair);
+
+        const dataset = input.get(pair);
+
+        if (!model) {
+          log(`[**] Model ${pair} not found`, Colors.RED);
+          continue;
+        }
+
+        if (!dataset) {
+          log(`[**] Dataset for ${pair} not found`, Colors.RED);
+          continue;
+        }
+
+        // Define a threshold for Buy/Sell/Hold decision
+        const threshold = 0.0000001;
+        //   // Define the network fee as a percentage of the transaction
+        const networkFeePercentage = 0.0005; // 0.05% fee
+
+        const feeAdjustedThreshold = threshold + networkFeePercentage;
+
+        const lstm_model_prediction = await this.getModelPrediction(
+          model,
+          dataset.map((data) => ({
+            time: data.time,
+            open: data.open,
+            high: data.high,
+            low: data.low,
+            close: data.close,
+          })),
+          feeAdjustedThreshold
+        );
+
+        results.set(pair, {
+          timestamp: Math.floor(Date.now() / 1000) * 1000,
+          pair,
+          current_value: dataset[dataset.length - 1].close,
+          lstm_timestamp: lstm_model_prediction.timestamp,
+          predicted_value: lstm_model_prediction.predictedValue,
+          predicted_command: lstm_model_prediction.command,
+        });
+      } catch (error) {
+        log(`Error while predicting next prices: ${error}`, Colors.RED);
+        continue;
+      }
     }
 
-    // Define a threshold for Buy/Sell/Hold decision
-    const threshold = 0.0000001;
-    //   // Define the network fee as a percentage of the transaction
-    const networkFeePercentage = 0.0005; // 0.05% fee
-
-    const feeAdjustedThreshold = threshold + networkFeePercentage;
-
-    const lstm_model_waves_eth_prediction = await this.getModelPrediction(
-      this.lstm_model_waves_eth,
-      input.map((data) => ({
-        time: data.time,
-        open: data.waves_eth_open,
-        high: data.waves_eth_high,
-        low: data.waves_eth_low,
-        close: data.waves_eth_close,
-      })),
-      feeAdjustedThreshold
-    );
-
-    const lstm_model_waves_usd_prediction = await this.getModelPrediction(
-      this.lstm_model_waves_usd,
-      input.map((data) => ({
-        time: data.time,
-        open: data.waves_usd_open,
-        high: data.waves_usd_high,
-        low: data.waves_usd_low,
-        close: data.waves_usd_close,
-      })),
-      feeAdjustedThreshold
-    );
-
-    const lstm_model_eth_usd_prediction = await this.getModelPrediction(
-      this.lstm_model_eth_usd,
-      input.map((data) => ({
-        time: data.time,
-        open: data.eth_usd_open,
-        high: data.eth_usd_high,
-        low: data.eth_usd_low,
-        close: data.eth_usd_close,
-      })),
-      feeAdjustedThreshold
-    );
-
-    // Interpret predictions
-    const results: ITensorflowPrediction[] = [];
-
-    results.push({
-      timestamp: Math.floor(Date.now() / 1000) * 1000,
-      lstm_timestamp: lstm_model_waves_eth_prediction.timestamp,
-
-      lstm_model_waves_eth_predicted_value: lstm_model_waves_eth_prediction.predictedValue,
-      lstm_model_waves_eth_command: lstm_model_waves_eth_prediction.command,
-
-      lstm_model_waves_usd_predicted_value: lstm_model_waves_usd_prediction.predictedValue,
-      lstm_model_waves_usd_command: lstm_model_waves_usd_prediction.command,
-
-      lstm_model_eth_usd_predicted_value: lstm_model_eth_usd_prediction.predictedValue,
-      lstm_model_eth_usd_command: lstm_model_eth_usd_prediction.command,
-
-      summary_command: "Hold",
-    });
-
     results.forEach((result) => {
-      const currentCurrency_waves_eth = input[input.length - 1].waves_eth_close.toFixed(7);
-      const currentCurrency_waves_usd = input[input.length - 1].waves_usd_close.toFixed(7);
-      const currentCurrency_eth_usd = input[input.length - 1].eth_usd_close.toFixed(7);
+      const currentCurrency = result.current_value;
 
       const now = format(new Date(result.timestamp), "dd/MM/yy HH:mm");
       const lstmDate = format(new Date(result.lstm_timestamp), "dd/MM/yy HH:mm");
 
-      const predictedValue_waves_eth = result.lstm_model_waves_eth_predicted_value.toFixed(7);
-      const command_waves_eth = result.lstm_model_waves_eth_command;
-
-      const predictedValue_waves_usd = result.lstm_model_waves_usd_predicted_value.toFixed(7);
-      const command_waves_usd = result.lstm_model_waves_usd_command;
-
-      const predictedValue_eth_usd = result.lstm_model_eth_usd_predicted_value.toFixed(7);
-      const command_eth_usd = result.lstm_model_eth_usd_command;
+      const predictedValue = result.predicted_value.toFixed(7);
+      const command = result.predicted_command;
 
       log(
-        `[**] ${now}  WAVES-ETH Current currency: ${currentCurrency_waves_eth}. LSTM: ${command_waves_eth}: ${predictedValue_waves_eth} at ${lstmDate}`,
-        Colors.YELLOW
-      );
-
-      log(
-        `[**] ${now} WAVES-USD Current currency: ${currentCurrency_waves_usd}. LSTM: ${command_waves_usd}: ${predictedValue_waves_usd} at ${lstmDate}`,
-        Colors.YELLOW
-      );
-
-      log(
-        `[**] ${now} ETH-USD Current currency: ${currentCurrency_eth_usd}. LSTM: ${command_eth_usd}: ${predictedValue_eth_usd} at ${lstmDate}`,
-        Colors.YELLOW
+        `[**] ${now} ${result.pair} Current currency: ${currentCurrency}. LSTM: ${command}: ${predictedValue} at ${lstmDate}`,
+        getRandomEnumValue(Colors)
       );
     });
 

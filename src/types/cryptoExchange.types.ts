@@ -1,4 +1,4 @@
-import { CryptoBase, CryptoExchangeCoins } from "./basic.types";
+import { CryptoBase, CryptoExchangeCoins, CryptoPairs } from "./basic.types";
 
 export interface ICryptoExchangeResponse {
   id: string;
@@ -26,17 +26,13 @@ export interface ICryproExchangeWalletHistory {
 }
 
 export interface ITensorflowPrediction {
+  pair: CryptoPairs;
   timestamp: number;
+  current_value: number;
+
   lstm_timestamp: number;
-
-  lstm_model_waves_eth_predicted_value: number;
-  lstm_model_waves_eth_command: string;
-  lstm_model_waves_usd_predicted_value: number;
-  lstm_model_waves_usd_command: string;
-  lstm_model_eth_usd_predicted_value: number;
-  lstm_model_eth_usd_command: string;
-
-  summary_command: string;
+  predicted_value: number;
+  predicted_command: string;
 }
 
 export interface ICryptoExchangeTransactionsHistory {
