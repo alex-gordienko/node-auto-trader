@@ -3,15 +3,14 @@ import cryptoConfig from "../config/crypto.config";
 import { log, Colors } from "../utils/colored-console";
 import WavesWalletService from "./WavesWallet.service";
 import EtheriumWalletService from "./EtheriumWallet.service";
-import { CryptoExchangeCoins, CryptoExchangePairs } from "../types/basic.types";
+import { CryptoBase, CryptoExchangeCoins } from "../types/basic.types";
 import { TransactionResponse } from "ethers";
 import { TransferTransaction } from "@waves/ts-types";
 import { WithId, WithProofs } from "@waves/waves-transactions";
-import { ICryptoExchangeResponse } from "../types/cryptoExchange.types";
+import { ICryptoExchangeSwapResponse, ICryptoExchangePossiblePairsResponse } from "../types/cryptoExchange.types";
 
 class CryptoExchangeService {
-  private readonly changeNOW_base_url: string = "https://api.changenow.io/v1";
-  private readonly WAVES_wallet: string = cryptoConfig.wavesWallet;
+  private readonly changeNOW_base_url: string = "https://api.changenow.io/v2";
   private readonly ETH_wallet: string = cryptoConfig.etheriumWallet;
   private readonly changeNOW_api_key: string = cryptoConfig.changeNowApiKey;
 
@@ -22,32 +21,31 @@ class CryptoExchangeService {
 
   public getAvailableTradePairs = async (): Promise<boolean> => {
     try {
-      const response = await axios.get(`${this.changeNOW_base_url}/market-info/available-pairs`, {
+      const response = await axios.get<ICryptoExchangePossiblePairsResponse[]>(`${this.changeNOW_base_url}/exchange/available-pairs`, {
         headers: {
-          "x-api-key": this.changeNOW_api_key,
+          "x-changenow-api-key": this.changeNOW_api_key,
         },
       });
 
-      const availablePairs: CryptoExchangePairs[] = [];
-      const unavailablePairs: CryptoExchangePairs[] = [];
+      const availableCoins: CryptoExchangeCoins[] = [];
+      const unavailableCoins: CryptoExchangeCoins[] = [];
+      for (const cryptoExchangePair of Object.values(CryptoExchangeCoins)) {
+        const from = cryptoExchangePair.split("_")[0].toLowerCase() as CryptoBase;
+        const to = cryptoExchangePair.split("_")[1].toLowerCase() as CryptoBase;
 
-      for (const cryptoExchangePair of Object.values(CryptoExchangePairs)) {
-        const isAvailable = response.data.find((pair: string) => pair === cryptoExchangePair);
+        const isAvailable = response.data.find(pair => pair.fromCurrency === from && pair.toCurrency === to && pair.fromNetwork === "eth" && pair.toNetwork === "eth") !== undefined;
         if (!isAvailable) {
-          unavailablePairs.push(cryptoExchangePair);
+          unavailableCoins.push(cryptoExchangePair);
         } else {
-          availablePairs.push(cryptoExchangePair);
-
-          const from = cryptoExchangePair.split("_")[0] as CryptoExchangeCoins;
-          const to = cryptoExchangePair.split("_")[1] as CryptoExchangeCoins;
+          availableCoins.push(cryptoExchangePair);
 
           await this.minimalExchangeAmount(from, to);
           await this.minimalExchangeAmount(to, from);
         }
       }
 
-      availablePairs.length && log(`[**] ${availablePairs.join(", ")} tradings are available`, Colors.MAGENTA);
-      unavailablePairs.length && log(`[**] ${unavailablePairs.join(", ")} tradings are unavailable`, Colors.RED);
+      availableCoins.length && log(`[**] ${availableCoins.join(", ")} tradings are available`, Colors.MAGENTA);
+      unavailableCoins.length && log(`[**] ${unavailableCoins.join(", ")} tradings are unavailable`, Colors.RED);
       return true;
     } catch (error) {
       log("Error getting available trade pairs", Colors.RED);
@@ -56,11 +54,11 @@ class CryptoExchangeService {
     }
   };
 
-  public minimalExchangeAmount = async (from: CryptoExchangeCoins, to: CryptoExchangeCoins): Promise<number> => {
+  public minimalExchangeAmount = async (from: CryptoBase, to: CryptoBase): Promise<number> => {
     try {
-      const response = await axios.get(`${this.changeNOW_base_url}/min-amount/${from}_${to}`, {
+      const response = await axios.get(`${this.changeNOW_base_url}/exchange/min-amount?fromCurrency=${from}&toCurrency=${to}&fromNetwork=eth&toNetwork=eth`, {
         headers: {
-          "x-api-key": this.changeNOW_api_key,
+          "x-changenow-api-key": this.changeNOW_api_key,
         },
       });
 
@@ -74,72 +72,39 @@ class CryptoExchangeService {
     }
   };
 
-  public changeWAVEStoETH = async (): Promise<{
-    exchangeAPIresponse: ICryptoExchangeResponse;
-    wavesTransaction: (TransferTransaction & WithId & WithProofs) | null;
+  public swapCoins = async (from: CryptoBase, to: CryptoBase): Promise<{
+    exchangeAPIresponse: ICryptoExchangeSwapResponse;
+    ethTransaction: TransactionResponse | null;
   } | null> => {
-    log(`[**] Changing WAVES to ETH`, Colors.MAGENTA);
+    if (from === to) {
+      log(`[***] ${from} and ${to} are the same coins. No need to swap`, Colors.YELLOW);
+      return null;
+    }
+    log(`[**] Changing ${from} to ${to}`, Colors.MAGENTA);
     try {
-      const isWAVES_ETHAvailable = await this.getAvailableTradePairs();
-      const minimalAmount = await this.minimalExchangeAmount(CryptoExchangeCoins.WAVES, CryptoExchangeCoins.ETH);
+      const isTradeAvailable = await this.getAvailableTradePairs();
+      const minimalAmount = await this.minimalExchangeAmount(from, to);
 
-      if (!isWAVES_ETHAvailable || minimalAmount === 0) {
-        log("[***] WAVES-ETH pair is not available or minimal amount is 0", Colors.RED);
+      if (!isTradeAvailable || minimalAmount === 0) {
+        log(`[***] ${from}-${to} pair is not available or minimal amount is 0`, Colors.RED);
         return null;
       }
 
-      const response = await axios.post(`${this.changeNOW_base_url}/transactions/${this.changeNOW_api_key}`, {
-        from: CryptoExchangeCoins.WAVES,
-        to: CryptoExchangeCoins.ETH,
+      const response = await axios.post(`${this.changeNOW_base_url}/exchange`, {
+        fromCurrency: from,
+        toCurrency: to,
+        fromNetwork: "eth",
+        toNetwork: "eth",
         amount: minimalAmount,
         address: this.ETH_wallet,
         flow: "standard",
+      }, {
+        headers: {
+          "x-changenow-api-key": this.changeNOW_api_key,
+        },
       });
 
-      const transactionData = response.data as ICryptoExchangeResponse;
-      log(`[***] Exchange transaction ID: ${transactionData.id}`, Colors.MAGENTA);
-      log(`[***] Exchange temporal address: ${transactionData.payinAddress}`, Colors.MAGENTA);
-
-      const transaction = await WavesWalletService.sendCoins(transactionData.payinAddress, minimalAmount);
-
-      if (transaction) {
-        log(`[***] Exchange transaction hash: ${transaction.id}`, Colors.MAGENTA);
-      }
-
-      return {
-        exchangeAPIresponse: transactionData,
-        wavesTransaction: transaction,
-      };
-    } catch (error) {
-      log("Error changing WAVES to ETH", Colors.RED);
-      log(error, Colors.RED);
-      return null;
-    }
-  };
-
-  public changeETHtoWAVES = async (): Promise<{
-    exchangeAPIresponse: ICryptoExchangeResponse;
-    ethTransaction: TransactionResponse | null;
-  } | null> => {
-    log(`[**] Changing ETH to WAVES`, Colors.MAGENTA);
-    try {
-      const isETH_WAVESavailable = await this.getAvailableTradePairs();
-      const minimalAmount = await this.minimalExchangeAmount(CryptoExchangeCoins.ETH, CryptoExchangeCoins.WAVES);
-
-      if (!isETH_WAVESavailable || minimalAmount === 0) {
-        log("[***] ETH-WAVES pair is not available or minimal amount is 0", Colors.RED);
-        return null;
-      }
-
-      const response = await axios.post(`${this.changeNOW_base_url}/transactions/${this.changeNOW_api_key}`, {
-        from: CryptoExchangeCoins.ETH,
-        to: CryptoExchangeCoins.WAVES,
-        amount: minimalAmount,
-        address: this.WAVES_wallet,
-        flow: "standard",
-      });
-
-      const transactionData = response.data as ICryptoExchangeResponse;
+      const transactionData = response.data as ICryptoExchangeSwapResponse;
       log(`[***] Exchange transaction ID: ${transactionData.id}`, Colors.MAGENTA);
       log(`[***] Exchange temporal address: ${transactionData.payinAddress}`, Colors.MAGENTA);
 
@@ -154,7 +119,7 @@ class CryptoExchangeService {
         ethTransaction: transaction,
       };
     } catch (error) {
-      log("Error changing ETH to WAVES", Colors.RED);
+      log(`Error changing ${from} to ${to}`, Colors.RED);
       log(error, Colors.RED);
       return null;
     }

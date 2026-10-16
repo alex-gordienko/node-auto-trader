@@ -2,38 +2,27 @@ import * as fs from "fs";
 import * as path from "path";
 
 import { TransactionResponse } from "ethers";
-import { WithId, WithProofs } from "@waves/waves-transactions";
-import { TransferTransaction } from "@waves/ts-types";
 
 import { ICyptoCompareData, ICyptoCompareHistoryMinutePair } from "../types/cryptoCompare.types";
 import { log, Colors } from "../utils/colored-console";
 import {
   ICryproExchangeWalletHistory,
-  ICryptoExchangeResponse,
+  ICryptoExchangeSwapResponse,
   ICryptoExchangeTransactionsHistory,
   ITensorflowPrediction,
 } from "../types/cryptoExchange.types";
 import { CryptoBase, CryptoPairs } from "../types/basic.types";
 import EtheriumWalletService from "./EtheriumWallet.service";
-import WavesWalletService from "./WavesWallet.service";
 
 interface ITransactionHistoryETHProps {
-  from: CryptoBase.ETH;
-  to: CryptoBase.WAVES;
+  from: CryptoBase;
+  to: CryptoBase;
   coins: CryptoBase[];
-  exchangeAPIResponse: ICryptoExchangeResponse;
+  exchangeAPIResponse: ICryptoExchangeSwapResponse;
   transactionResponse: TransactionResponse | null;
 }
 
-interface ITransactionHistoryWAVESProps {
-  from: CryptoBase.WAVES;
-  to: CryptoBase.ETH;
-  coins: CryptoBase[];
-  exchangeAPIResponse: ICryptoExchangeResponse;
-  transactionResponse: (TransferTransaction & WithId & WithProofs) | null;
-}
-
-type TransactionHistoryProps = ITransactionHistoryETHProps | ITransactionHistoryWAVESProps;
+type TransactionHistoryProps = ITransactionHistoryETHProps;
 
 class LocalStorageService {
   private storagePath: string;
@@ -190,20 +179,15 @@ class LocalStorageService {
     try {
       const fileName = `transactions/${props.coins[0]}-${props.coins[1]}-transactions-history.json`;
 
-      const ethToWave = props.from === CryptoBase.ETH && props.to === CryptoBase.WAVES;
 
-      const amount = ethToWave
-        ? Number(EtheriumWalletService.convertBigIntToETH(props.transactionResponse?.value || BigInt(0)))
-        : WavesWalletService.convertLongToWaves(props.transactionResponse?.amount);
+      const amount = Number(EtheriumWalletService.convertBigIntToETH(props.transactionResponse?.value || BigInt(0)))
 
-      const walletFrom = ethToWave ? EtheriumWalletService.getAddress() : WavesWalletService.getAddress();
+      const walletFrom = EtheriumWalletService.getAddress();
       const walletTo = props.exchangeAPIResponse.payinAddress;
 
-      const transactionHash = ethToWave ? props.transactionResponse?.hash : props.transactionResponse?.id;
+      const transactionHash = props.transactionResponse?.hash;
 
-      const networkFee = ethToWave
-        ? await EtheriumWalletService.getTransactionFee(transactionHash || "")
-        : WavesWalletService.convertLongToWaves(props.transactionResponse?.fee);
+      const networkFee = await EtheriumWalletService.getTransactionFee(transactionHash || "")
 
       const transactionHistory: ICryptoExchangeTransactionsHistory = {
         timestamp: new Date().getTime(),

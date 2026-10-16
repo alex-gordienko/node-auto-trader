@@ -2,13 +2,14 @@ import { Router } from "express";
 import { format } from "date-fns";
 import routes from "../config/routes.config";
 
-import CryptoCompareService from "../services/CryptoCompare.service";
 import TensorflowService from "../services/Tensorflow.service";
+import StatisticAndPredictionService from "../services/StatisticAndPrediction.service";
 // import DigitalOceanStorageService from "../services/DigitalOcean.storage.service";
 import DigitalOceanStorageService from "../services/Local.storage.service";
-import { CryptoBase, CryptoPairs } from "../types/basic.types";
+import { CryptoPairs } from "../types/basic.types";
 import { Colors, log } from "../utils/colored-console";
 import { ICyptoCompareData } from "../types/cryptoCompare.types";
+import { ITensorflowPrediction } from "../types/cryptoExchange.types";
 import cryptoConfig from "../config/crypto.config";
 
 export default () => {
@@ -24,9 +25,11 @@ export default () => {
 
   router.get(routes.REST.LEARN_TENSORFLOW, async (req, res) => {
     const trainingDataset: Map<CryptoPairs, ICyptoCompareData[]> = new Map();
+    const predictionHistory: Map<CryptoPairs, ITensorflowPrediction[]> = new Map();
 
     for (const pair of Object.values(CryptoPairs)) {
       const trainData = await DigitalOceanStorageService.getTradingHistory(pair);
+      predictionHistory.set(pair, await DigitalOceanStorageService.getTensorflowPredictionHistory(pair));
 
       if (!trainData) {
         log(`No trading history for ${pair}`, Colors.RED);
@@ -36,7 +39,7 @@ export default () => {
       trainingDataset.set(pair, trainData);
     }
 
-    TensorflowService.trainAllModels(trainingDataset);
+    TensorflowService.trainAllModels(trainingDataset, predictionHistory);
 
     res.json({
       status: "ok",
@@ -54,17 +57,14 @@ export default () => {
     const trainingDataset: Map<CryptoPairs, ICyptoCompareData[]> = new Map();
 
     for (const pair of Object.values(CryptoPairs)) {
-      const base = pair.split("-")[0] as CryptoBase;
-      const to = pair.split("-")[1] as CryptoBase;
+      const candles = await StatisticAndPredictionService.syncCandles(pair);
 
-      const trainData = await CryptoCompareService.getMinutePairOHLCV(base, to, 200);
-
-      if (!trainData) {
+      if (!candles.length) {
         log(`No trading history for ${pair}`, Colors.RED);
         continue;
       }
 
-      trainingDataset.set(pair, trainData.Data.Data);
+      trainingDataset.set(pair, candles.slice(-cryptoConfig.cryptoCompare.inferenceCandles));
     }
 
     const predictionByMinute = await TensorflowService.predictNextPrices(trainingDataset);
@@ -80,23 +80,10 @@ export default () => {
     const links: Map<CryptoPairs, string> = new Map();
 
     for (const pair of Object.values(CryptoPairs)) {
-      const base = pair.split("-")[0] as CryptoBase;
-      const to = pair.split("-")[1] as CryptoBase;
+      // fetches only the missing minutes and saves them to the dataset
+      const candles = await StatisticAndPredictionService.syncCandles(pair);
 
-      const tradingHistory = await CryptoCompareService.getMinutePairOHLCV(
-        base,
-        to,
-        cryptoConfig.requestLimitMinutePairModelTraining
-      );
-
-      if (!tradingHistory) {
-        log(`No trading history for ${pair}`, Colors.RED);
-        continue;
-      }
-
-      const link = await DigitalOceanStorageService.pushTradingHistory(pair, tradingHistory);
-
-      links.set(pair, link || "Not saved");
+      links.set(pair, candles.length ? `datasets/${pair}-trading-history.json` : "Not saved");
     }
 
     res.json({

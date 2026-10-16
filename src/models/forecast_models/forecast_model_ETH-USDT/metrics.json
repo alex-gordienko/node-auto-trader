@@ -1,0 +1,9 @@
+{
+  "trainedAt": 1792141200177,
+  "samples": 1948,
+  "valSamples": 390,
+  "modelMae": 0.23543230732007936,
+  "naiveMae": 0.2252814259288407,
+  "directionAccuracy": 0.4512820512820513,
+  "beatsNaive": false
+}

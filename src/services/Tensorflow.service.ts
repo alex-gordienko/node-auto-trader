@@ -1,3 +1,4 @@
+import "../utils/tfjs-node-compat";
 import fse from "fs-extra";
 import type * as tfType from "@tensorflow/tfjs-node";
 import { format } from "date-fns";
@@ -8,411 +9,506 @@ import { ICyptoCompareData } from "../types/cryptoCompare.types";
 import { log, Colors, getRandomEnumValue } from "../utils/colored-console";
 import { ITensorflowPrediction } from "../types/cryptoExchange.types";
 import { CryptoPairs } from "../types/basic.types";
+import { buildMarketFeatures, INDICATOR_WARMUP, IOHLCV, MARKET_FEATURE_COUNT } from "../utils/technical-indicators";
+import {
+  argmax,
+  buildForecastSamples,
+  computeForecastErrors,
+  evaluateLivePredictions,
+  featureWindow,
+  FORECAST_TARGET_SCALE,
+  IForecastMetrics,
+  ILiveFeedback,
+  toOHLCV,
+} from "../utils/tensorflow.helpers";
+import {
+  buildInferenceState,
+  DQN_FEATURE_COUNT,
+  RL_ACTION_LABELS,
+  RLAction,
+  RLActionIndex,
+  TradingEnvironment,
+} from "./rl/trading-env";
+import { ITransition, ReplayBuffer } from "./rl/replay-buffer";
 
-// Import TensorFlow.js types
-// Dynamically import the appropriate TensorFlow.js backend
 const tf: typeof tfType = cryptoConfig.useGPU ? require("@tensorflow/tfjs-node-gpu") : require("@tensorflow/tfjs-node");
 
+/**
+ * Two linked models per pair:
+ * - forecast: supervised regressor, predicts the price `horizon` minutes ahead;
+ * - DQN: chooses Hold / Buy / Sell and receives the forecast as an input feature.
+ * Both self-correct on retraining using saved production predictions vs. prices that actually happened.
+ */
 class TensorflowAI {
-  private modelDirectory: string = `${__dirname}/../models/lstm_models`;
+  private dqnDirectory: string = `${__dirname}/../models/dqn_models`;
+  private forecastDirectory: string = `${__dirname}/../models/forecast_models`;
 
   private modelsMap: Map<CryptoPairs, tfType.LayersModel> = new Map();
+  private targetModelsMap: Map<CryptoPairs, tfType.LayersModel> = new Map();
+  private forecastModelsMap: Map<CryptoPairs, tfType.LayersModel> = new Map();
+  private forecastMetricsMap: Map<CryptoPairs, IForecastMetrics> = new Map();
 
   constructor() {
-    log("[*] Initializing Tensorflow AI Service", Colors.GREEN);
-
+    log("[*] Initializing Tensorflow Service (forecast + DQN)", Colors.GREEN);
+    fse.ensureDirSync(this.dqnDirectory);
+    fse.ensureDirSync(this.forecastDirectory);
     this.loadModels();
-
-    this.createModelDirectory();
   }
 
-  private createModelDirectory() {
-    if (!fse.existsSync(this.modelDirectory)) {
-      fse.mkdirSync(this.modelDirectory, { recursive: true });
-    }
+  private get dqnTimeSteps() {
+    return cryptoConfig.longTermMinuteWindowPrediction;
+  }
+
+  private get forecastWindow() {
+    return cryptoConfig.forecast.windowSize;
+  }
+
+  private get horizon() {
+    return cryptoConfig.forecast.horizonMinutes;
   }
 
   public generateModelName(pair: CryptoPairs): string {
-    return `lstm_model_${pair}`;
+    return `dqn_model_${pair}`;
   }
 
-  private createLSTMmodel = () => {
-    const timeSteps = cryptoConfig.longTermMinuteWindowPrediction;
-    const features = 10; // time, open, high, low, close, volatility, price change, MA5, MA10, RSI14
+  private generateForecastModelName(pair: CryptoPairs): string {
+    return `forecast_model_${pair}`;
+  }
 
-    const input = tf.input({ shape: [timeSteps, features] });
+  // ---------- model creation / persistence ----------
 
-    // Convolutional Layer for feature extraction
-    const convLayer = tf.layers.conv1d({ filters: 64, kernelSize: 10, activation: "relu" }).apply(input);
-
-    // LSTM Layers
-    const lstmLayer1 = tf.layers
-      .lstm({ units: 50, returnSequences: true, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
-      .apply(convLayer);
-    const dropout1 = tf.layers.dropout({ rate: 0.2 }).apply(lstmLayer1);
-
-    const lstmLayer2 = tf.layers
-      .lstm({ units: 50, returnSequences: true, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
-      .apply(dropout1);
-    const dropout2 = tf.layers.dropout({ rate: 0.2 }).apply(lstmLayer2);
-
-    const lstmLayer3 = tf.layers
-      .lstm({ units: 50, returnSequences: false, kernelRegularizer: tf.regularizers.l2({ l2: 0.01 }) })
-      .apply(dropout2);
-    const dropout3 = tf.layers.dropout({ rate: 0.2 }).apply(lstmLayer3);
-
-    // Output for regression (predicting the currency value)
-    const regressionOutput = tf.layers
-      .dense({ units: 1, name: "regressionOutput" })
-      .apply(dropout3) as tfType.SymbolicTensor;
-
-    // Output for classification (predicting the command)
-    const classificationOutput = tf.layers
-      .dense({ units: 3, activation: "softmax", name: "classificationOutput" })
-      .apply(dropout3) as tfType.SymbolicTensor;
-
-    const model = tf.model({ inputs: input, outputs: [regressionOutput, classificationOutput] });
-
-    model.compile({
-      optimizer: tf.train.adam(0.02),
-      loss: {
-        regressionOutput: "meanSquaredError",
-        classificationOutput: "categoricalCrossentropy",
-      },
-      metrics: {
-        regressionOutput: "mse",
-        classificationOutput: "accuracy",
-      },
-    });
-
-    log("[**] New LSTM model created for regression and classification", Colors.GREEN);
-
+  private createDQNmodel = (): tfType.LayersModel => {
+    const model = tf.sequential();
+    model.add(tf.layers.inputLayer({ inputShape: [this.dqnTimeSteps, DQN_FEATURE_COUNT] }));
+    model.add(tf.layers.conv1d({ filters: 32, kernelSize: 3, activation: "relu" }));
+    model.add(tf.layers.lstm({ units: 32 }));
+    model.add(tf.layers.dense({ units: 32, activation: "relu" }));
+    model.add(tf.layers.dense({ units: 3 }));
+    this.compileDQN(model);
     return model;
   };
 
-  private async loadModel(modelPair: CryptoPairs): Promise<tfType.LayersModel> {
-    const modelName = this.generateModelName(modelPair);
-    const modelPath = `file://${this.modelDirectory}/${modelName}/model.json`;
+  private compileDQN(model: tfType.LayersModel) {
+    model.compile({ optimizer: tf.train.adam(cryptoConfig.rl.learningRate), loss: "meanSquaredError" });
+  }
 
-    try {
-      const model = await tf.loadLayersModel(modelPath);
-      log(`[**] Model ${modelPair} loaded from file`, Colors.GREEN);
-      return model;
-    } catch (error) {
-      log(`Error loading model ${modelPair}: ${error}`, Colors.RED);
-      throw error;
-    }
+  private createForecastModel(): tfType.LayersModel {
+    const model = tf.sequential();
+    model.add(tf.layers.inputLayer({ inputShape: [this.forecastWindow, MARKET_FEATURE_COUNT] }));
+    model.add(tf.layers.lstm({ units: 32, dropout: 0.1 }));
+    model.add(tf.layers.dense({ units: 16, activation: "relu" }));
+    model.add(tf.layers.dense({ units: 1 }));
+    this.compileForecast(model);
+    return model;
+  }
+
+  private compileForecast(model: tfType.LayersModel) {
+    model.compile({ optimizer: tf.train.adam(cryptoConfig.forecast.learningRate), loss: "meanAbsoluteError" });
+  }
+
+  private hasInputShape(model: tfType.LayersModel, steps: number, features: number): boolean {
+    const shape = model.inputs[0].shape;
+    return shape[1] === steps && shape[2] === features;
+  }
+
+  private cloneWeights(source: tfType.LayersModel, target: tfType.LayersModel) {
+    const clones = source.getWeights().map((w) => w.clone());
+    target.setWeights(clones);
+    clones.forEach((w) => w.dispose());
   }
 
   private loadModels = async () => {
     for (const pair of Object.values(CryptoPairs)) {
-      try {
-        log(`[*] Loading LSTM model for ${pair} currency from pre-saved file`, Colors.GREEN);
-
-        const model = await this.loadModel(pair);
-        model.compile({
-          optimizer: tf.train.adam(0.02),
-          loss: {
-            regressionOutput: "meanSquaredError",
-            classificationOutput: "categoricalCrossentropy",
-          },
-          metrics: {
-            regressionOutput: "mse",
-            classificationOutput: "accuracy",
-          },
-        });
-
-        this.modelsMap.set(pair, model);
-
-        log(`[**] LSTM model for ${pair} currency has been loaded from pre-saved file`, Colors.GREEN);
-      } catch (error) {
-        log(`Error while loading LSTM model for ${pair} currency: ${error}`, Colors.RED);
-        log("[**] Creating new model", Colors.GREEN);
-
-        const model = this.createLSTMmodel();
-
-        this.modelsMap.set(pair, model);
-      }
+      await this.loadDQN(pair);
+      await this.loadForecast(pair);
     }
   };
 
-  private saveModel = async (modelPair: CryptoPairs) => {
-    const model = this.modelsMap.get(modelPair);
+  private async loadDQN(pair: CryptoPairs) {
+    let model: tfType.LayersModel | null = null;
+    try {
+      model = await tf.loadLayersModel(`file://${this.dqnDirectory}/${this.generateModelName(pair)}/model.json`);
+      if (!this.hasInputShape(model, this.dqnTimeSteps, DQN_FEATURE_COUNT)) {
+        log(`[**] Saved DQN for ${pair} has an old input shape, creating a new one`, Colors.YELLOW);
+        model.dispose();
+        model = null;
+      } else {
+        this.compileDQN(model);
+        log(`[**] DQN model ${pair} loaded from file`, Colors.GREEN);
+      }
+    } catch {
+      log(`[**] No DQN model for ${pair} yet, creating a new one`, Colors.YELLOW);
+    }
 
-    if (!model) {
-      log(`[**] Model ${modelPair} not found`, Colors.RED);
+    const policy = model ?? this.createDQNmodel();
+    const target = this.createDQNmodel();
+    this.cloneWeights(policy, target);
+    this.modelsMap.set(pair, policy);
+    this.targetModelsMap.set(pair, target);
+  }
+
+  private async loadForecast(pair: CryptoPairs) {
+    const dir = `${this.forecastDirectory}/${this.generateForecastModelName(pair)}`;
+    try {
+      const model = await tf.loadLayersModel(`file://${dir}/model.json`);
+      if (!this.hasInputShape(model, this.forecastWindow, MARKET_FEATURE_COUNT)) {
+        log(`[**] Saved forecast model for ${pair} has an old input shape, it will be retrained`, Colors.YELLOW);
+        model.dispose();
+        return;
+      }
+      this.compileForecast(model);
+      this.forecastModelsMap.set(pair, model);
+      if (fse.existsSync(`${dir}/metrics.json`)) {
+        this.forecastMetricsMap.set(pair, fse.readJsonSync(`${dir}/metrics.json`));
+      }
+      log(`[**] Forecast model ${pair} loaded from file`, Colors.GREEN);
+    } catch {
+      log(`[**] No forecast model for ${pair} yet, it will be created on next training`, Colors.YELLOW);
+    }
+  }
+
+  private saveDQN = async (pair: CryptoPairs) => {
+    const model = this.modelsMap.get(pair);
+    if (!model) return;
+    const path = `${this.dqnDirectory}/${this.generateModelName(pair)}`;
+    fse.ensureDirSync(path);
+    await model.save("file://" + path);
+    log(`[**] DQN model ${pair} saved to file`, Colors.GREEN);
+  };
+
+  private saveForecast = async (pair: CryptoPairs) => {
+    const model = this.forecastModelsMap.get(pair);
+    if (!model) return;
+    const path = `${this.forecastDirectory}/${this.generateForecastModelName(pair)}`;
+    fse.ensureDirSync(path);
+    await model.save("file://" + path);
+    fse.writeJsonSync(`${path}/metrics.json`, this.forecastMetricsMap.get(pair), { spaces: 2 });
+  };
+
+  // ---------- forecast ----------
+
+  private isForecastReliable(pair: CryptoPairs): boolean {
+    return this.forecastMetricsMap.get(pair)?.beatsNaive ?? false;
+  }
+
+  /**
+   * Raw forecast (scaled horizon log-return) for every candle from `fromIndex`, aligned with `candles`.
+   * Candles without enough history get 0.
+   */
+  private forecastSeries(pair: CryptoPairs, features: number[][], fromIndex = 0): number[] {
+    const series = new Array(features.length).fill(0);
+    const model = this.forecastModelsMap.get(pair);
+    const start = Math.max(fromIndex, INDICATOR_WARMUP, this.forecastWindow - 1);
+    if (!model || start >= features.length) {
+      return series;
+    }
+
+    const windows: number[][][] = [];
+    for (let t = start; t < features.length; t++) {
+      windows.push(featureWindow(features, t, this.forecastWindow));
+    }
+    const output = tf.tidy(() => Array.from((model.predict(tf.tensor3d(windows)) as tfType.Tensor).dataSync()));
+    output.forEach((v, i) => (series[start + i] = v));
+    return series;
+  }
+
+  /** What the DQN sees: the forecast only when it has proven better than "no change", otherwise zeros. */
+  private dqnForecastFeature(pair: CryptoPairs, rawSeries: number[]): number[] {
+    return this.isForecastReliable(pair) ? rawSeries : rawSeries.map(() => 0);
+  }
+
+  private trainForecast = async (
+    pair: CryptoPairs,
+    candles: IOHLCV[],
+    features: number[][],
+    feedback: ILiveFeedback
+  ): Promise<void> => {
+    const { indexes, xs, ys } = buildForecastSamples(candles, features, this.forecastWindow, this.horizon);
+
+    if (xs.length < 300) {
+      log(`[**] ${pair}: not enough contiguous candles to train forecast (${xs.length} samples)`, Colors.RED);
       return;
     }
 
-    const modelName = this.generateModelName(modelPair);
-    const modelPath = `${this.modelDirectory}/${modelName}`;
+    // chronological split with a horizon-sized embargo, so validation is strictly "the future"
+    const splitAt = Math.floor(xs.length * 0.8);
+    const trainEnd = splitAt - this.horizon;
 
-    fse.ensureDirSync(modelPath);
-
-    await model?.save("file://" + modelPath);
-    log(`[**] Model ${modelPair} saved to file`, Colors.GREEN);
-  };
-
-  private prepareInputData(data: number[][], timeSteps: number): tfType.Tensor {
-    // Нормализация данных
-    const normalizedData = data;
-
-    // Подготовка входных данных для модели
-    const inputData = [];
-    for (let i = 0; i < normalizedData.length - timeSteps; i++) {
-      const x = normalizedData.slice(i, i + timeSteps);
-      inputData.push(x);
-    }
-
-    // Преобразование в тензор
-    return tf.tensor3d(inputData, [inputData.length, timeSteps, data[0].length]);
-  }
-
-  private normalize(data: number[][]): { normalizedData: number[][]; mean: number[]; std: number[] } {
-    const timeFeature = data.map((row) => row[0]);
-    const priceFeatures = data.map((row) => row.slice(1));
-
-    // Normalize time feature
-    const meanTime = timeFeature.reduce((a, b) => a + b, 0) / timeFeature.length;
-    const stdTime = Math.sqrt(
-      timeFeature.map((x) => Math.pow(x - meanTime, 2)).reduce((a, b) => a + b) / timeFeature.length
-    );
-    const normalizedTime = timeFeature.map((value) => (value - meanTime) / stdTime);
-
-    // Normalize price features
-    const meanPrices = Array(priceFeatures[0].length).fill(0);
-    const stdPrices = Array(priceFeatures[0].length).fill(0);
-
-    for (const row of priceFeatures) {
-      row.forEach((value, index) => {
-        meanPrices[index] += value;
-      });
-    }
-    meanPrices.forEach((value, index, array) => {
-      array[index] = value / priceFeatures.length;
-    });
-
-    for (const row of priceFeatures) {
-      row.forEach((value, index) => {
-        stdPrices[index] += Math.pow(value - meanPrices[index], 2);
-      });
-    }
-    stdPrices.forEach((value, index, array) => {
-      array[index] = Math.sqrt(value / priceFeatures.length);
-    });
-
-    const normalizedPriceFeatures = priceFeatures.map((row) =>
-      row.map((value, index) => (value - meanPrices[index]) / stdPrices[index])
-    );
-
-    const normalizedData = normalizedTime.map((time, index) => [time, ...normalizedPriceFeatures[index]]);
-
-    // Concatenate normalized time and price features
-    return { normalizedData, mean: [meanTime, ...meanPrices], std: [stdTime, ...stdPrices] };
-  }
-
-  private denormalize = (value: number, mean: number, std: number): number => {
-    return value * std + mean;
-  };
-
-  private calculateSMA(data: number[], period: number): number[] {
-    const sma = [];
-    for (let i = 0; i < data.length; i++) {
-      if (i < period - 1) {
-        sma.push(0);
-      } else {
-        const sum = data.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
-        sma.push(sum / period);
+    // self-correction: samples where the live forecast was badly wrong are seen twice
+    const trainX: number[][][] = [];
+    const trainY: number[] = [];
+    let hardCount = 0;
+    for (let i = 0; i < trainEnd; i++) {
+      trainX.push(xs[i]);
+      trainY.push(ys[i]);
+      if (feedback.hardSampleIndexes.has(indexes[i])) {
+        trainX.push(xs[i]);
+        trainY.push(ys[i]);
+        hardCount++;
       }
     }
-    return sma;
+
+    const valY = ys.slice(splitAt);
+    const xTrain = tf.tensor3d(trainX);
+    const yTrain = tf.tensor2d(trainY, [trainY.length, 1]);
+    const xVal = tf.tensor3d(xs.slice(splitAt));
+    const yVal = tf.tensor2d(valY, [valY.length, 1]);
+
+    // warm start: keep what the model already knows and correct it on new data
+    const previous = this.forecastModelsMap.get(pair);
+    const model = this.createForecastModel();
+    const { epochs } = cryptoConfig.forecast;
+    if (previous) {
+      this.cloneWeights(previous, model);
+    }
+
+    console.time(`${pair}: Forecast Training Time`);
+    try {
+      await model.fit(xTrain, yTrain, {
+        epochs: previous ? Math.ceil(epochs / 3) : epochs,
+        batchSize: 64,
+        shuffle: true,
+        validationData: [xVal, yVal],
+        callbacks: tf.callbacks.earlyStopping({ monitor: "val_loss", patience: 4 }),
+        verbose: 0,
+      });
+
+      const predicted = tf.tidy(() => Array.from((model.predict(xVal) as tfType.Tensor).dataSync()));
+      const val = computeForecastErrors(predicted, valY);
+      const live = feedback.forecast;
+      // live results outweigh validation once there are enough of them
+      const liveSaysWorse = !!live && live.count >= 30 && live.mae >= live.naiveMae;
+
+      const metrics: IForecastMetrics = {
+        trainedAt: Date.now(),
+        samples: xs.length,
+        valSamples: valY.length,
+        modelMae: val.mae,
+        naiveMae: val.naiveMae,
+        directionAccuracy: val.directionAccuracy,
+        beatsNaive: val.mae < val.naiveMae && !liveSaysWorse,
+        live: live ?? undefined,
+      };
+
+      previous?.dispose();
+      this.forecastModelsMap.set(pair, model);
+      this.forecastMetricsMap.set(pair, metrics);
+      await this.saveForecast(pair);
+
+      log(
+        `[**] ${pair} forecast ${previous ? "fine-tuned" : "trained"} on ${trainY.length} samples (${hardCount} hard from live). ` +
+          `Val MAE=${val.mae.toFixed(4)}% (naive ${val.naiveMae.toFixed(4)}%), direction=${(val.directionAccuracy * 100).toFixed(1)}%` +
+          (metrics.beatsNaive ? "" : " — NOT better than naive, forecast falls back to current price"),
+        metrics.beatsNaive ? Colors.GREEN : Colors.YELLOW
+      );
+    } catch (error) {
+      log(`[**] ${pair}: error while training forecast model: ${error}`, Colors.RED);
+      model.dispose();
+    } finally {
+      console.timeEnd(`${pair}: Forecast Training Time`);
+      tf.dispose([xTrain, yTrain, xVal, yVal]);
+    }
+  };
+
+  // ---------- DQN ----------
+
+  private predictQ(model: tfType.LayersModel, state: number[][]): number[] {
+    return tf.tidy(() => {
+      const input = tf.tensor3d([state], [1, this.dqnTimeSteps, DQN_FEATURE_COUNT]);
+      return Array.from((model.predict(input) as tfType.Tensor).dataSync());
+    });
   }
 
-  private calculateRSI(data: number[], period: number): number[] {
-    const rsi = [];
-    let gains = 0;
-    let losses = 0;
+  /** Mixes simulated experience with real production outcomes (`liveShare` of every batch). */
+  private async trainOnBatch(
+    model: tfType.LayersModel,
+    target: tfType.LayersModel,
+    buffer: ReplayBuffer,
+    liveBuffer: ReplayBuffer
+  ): Promise<void> {
+    const { batchSize, gamma, liveSampleShare } = cryptoConfig.rl;
+    if (buffer.size < batchSize) {
+      return;
+    }
 
-    for (let i = 1; i < data.length; i++) {
-      const change = data[i] - data[i - 1];
-      if (change > 0) {
-        gains += change;
-      } else {
-        losses -= change;
+    const liveCount = liveBuffer.size ? Math.round(batchSize * liveSampleShare) : 0;
+    const batch = [...buffer.sample(batchSize - liveCount), ...liveBuffer.sample(liveCount)];
+    const states = batch.map((b) => b.state);
+    const nextStates = batch.map((b) => b.nextState);
+    const shape: [number, number, number] = [batch.length, this.dqnTimeSteps, DQN_FEATURE_COUNT];
+
+    const [qValues, nextQValues] = tf.tidy(() => {
+      const q = (model.predict(tf.tensor3d(states, shape)) as tfType.Tensor).arraySync() as number[][];
+      const nq = (target.predict(tf.tensor3d(nextStates, shape)) as tfType.Tensor).arraySync() as number[][];
+      return [q, nq] as [number[][], number[][]];
+    });
+
+    const targets = qValues.map((row) => [...row]);
+    for (let i = 0; i < batch.length; i++) {
+      const { action, reward, done } = batch[i];
+      targets[i][action] = done ? reward : reward + gamma * Math.max(...nextQValues[i]);
+    }
+
+    const xs = tf.tensor3d(states, shape);
+    const ys = tf.tensor2d(targets, [batch.length, 3]);
+    await model.fit(xs, ys, { epochs: 1, verbose: 0 });
+    xs.dispose();
+    ys.dispose();
+  }
+
+  /**
+   * Turns real production decisions into terminal transitions:
+   * reward = what that action actually earned over the forecast horizon.
+   */
+  private buildLiveTransitions(env: TradingEnvironment, feedback: ILiveFeedback): ITransition[] {
+    const { feeRate } = cryptoConfig.rl;
+    const terminal = Array.from({ length: this.dqnTimeSteps }, () => new Array(DQN_FEATURE_COUNT).fill(0));
+    const transitions: ITransition[] = [];
+    let earned = 0;
+    let trades = 0;
+
+    for (const d of feedback.decisions) {
+      if (d.candleIndex < env.startIndex) continue;
+
+      let action: RLActionIndex = RLAction.Hold;
+      let reward = 0;
+      if (d.command === "Buy") {
+        action = RLAction.Buy;
+        reward = d.realizedReturn - feeRate;
+      } else if (d.command === "Sell") {
+        action = RLAction.Sell;
+        reward = -d.realizedReturn - feeRate;
+      }
+      if (action !== RLAction.Hold) {
+        earned += reward;
+        trades++;
       }
 
-      if (i >= period) {
-        const avgGain = gains / period;
-        const avgLoss = losses / period;
-        const rs = avgGain / avgLoss;
-        rsi.push(100 - 100 / (1 + rs));
+      transitions.push({ state: env.stateAt(d.candleIndex), action, reward, nextState: terminal, done: true });
+    }
 
-        // Update gains and losses for the next period
-        const prevChange = data[i - period + 1] - data[i - period];
-        if (prevChange > 0) {
-          gains -= prevChange;
-        } else {
-          losses += prevChange;
+    if (trades) {
+      log(
+        `[**] Live DQN decisions: ${trades} Buy/Sell, avg realized return per trade ${((earned / trades) * 100).toFixed(4)}%`,
+        earned > 0 ? Colors.GREEN : Colors.YELLOW
+      );
+    }
+    return transitions;
+  }
+
+  private trainDQN = async (pair: CryptoPairs, candles: IOHLCV[], forecasts: number[], feedback: ILiveFeedback) => {
+    const model = this.modelsMap.get(pair)!;
+    const target = this.targetModelsMap.get(pair)!;
+    const { episodes, replaySize, epsilonStart, epsilonMin, epsilonDecay, feeRate, invalidActionPenalty, trainEvery, targetUpdateEvery } =
+      cryptoConfig.rl;
+
+    const env = new TradingEnvironment(candles, forecasts, this.dqnTimeSteps, feeRate, invalidActionPenalty);
+    const replay = new ReplayBuffer(replaySize);
+    const liveTransitions = this.buildLiveTransitions(env, feedback);
+    const liveReplay = new ReplayBuffer(Math.max(liveTransitions.length, 1));
+    liveTransitions.forEach((t) => liveReplay.push(t));
+
+    let epsilon = epsilonStart;
+    let globalStep = 0;
+    let episodeReturns = 0;
+
+    log(`[**] Training ${pair} DQN for ${episodes} episodes (${liveTransitions.length} live experiences)`, Colors.GREEN);
+    console.time(`${pair}: DQN Training Time`);
+
+    try {
+      for (let episode = 0; episode < episodes; episode++) {
+        let state = env.reset();
+        let done = false;
+        let totalReward = 0;
+
+        while (!done) {
+          const action = (
+            Math.random() < epsilon ? Math.floor(Math.random() * 3) : argmax(this.predictQ(model, state))
+          ) as RLActionIndex;
+          const result = env.step(action);
+
+          replay.push({ state, action, reward: result.reward, nextState: result.state, done: result.done });
+
+          state = result.state;
+          done = result.done;
+          totalReward += result.reward;
+          globalStep += 1;
+
+          if (globalStep % trainEvery === 0) {
+            await this.trainOnBatch(model, target, replay, liveReplay);
+          }
+          if (globalStep % targetUpdateEvery === 0) {
+            this.cloneWeights(model, target);
+          }
         }
-      } else {
-        rsi.push(0);
+
+        epsilon = Math.max(epsilonMin, epsilon * epsilonDecay);
+        episodeReturns += totalReward;
+        log(
+          `[**] ${pair} episode ${episode + 1}/${episodes} reward=${totalReward.toFixed(5)} epsilon=${epsilon.toFixed(3)}`,
+          Colors.CYAN
+        );
       }
+
+      await this.saveDQN(pair);
+      log(`[**] ${pair} DQN training completed. Avg episode reward=${(episodeReturns / episodes).toFixed(5)}`, Colors.GREEN);
+      return true;
+    } catch (error) {
+      console.error("Error during DQN training:", error);
+      return false;
+    } finally {
+      console.timeEnd(`${pair}: DQN Training Time`);
     }
-    return rsi;
-  }
-
-  private prepareDataset = (
-    data: Pick<ICyptoCompareData, "time" | "high" | "low" | "open" | "close">[]
-  ): { normalizedData: number[][]; mean: number[]; std: number[] } => {
-    const closes = data.map((d) => d.close);
-    const ma5 = this.calculateSMA(closes, 5);
-    const ma10 = this.calculateSMA(closes, 10);
-    const rsi14 = this.calculateRSI(closes, 14);
-
-    const dataset = data.map((d, i) => [
-      d.time,
-      d.open,
-      d.high,
-      d.low,
-      d.close,
-      (d.high - d.low) / d.low,
-      (d.close - d.open) / d.open,
-      ma5[i] || 0, // MA5
-      ma10[i] || 0, // MA10
-      rsi14[i] || 0, // RSI14
-    ]);
-
-    return this.normalize(dataset);
   };
 
-  public async trainAllModels(input: Map<CryptoPairs, ICyptoCompareData[]>): Promise<boolean> { 
-    for (const [pair, data] of input) {
-      await this.trainModel(pair, data);
-    }
+  // ---------- public API ----------
 
+  public async trainAllModels(
+    input: Map<CryptoPairs, ICyptoCompareData[]>,
+    predictionHistory: Map<CryptoPairs, ITensorflowPrediction[]> = new Map()
+  ): Promise<boolean> {
+    for (const [pair, data] of input) {
+      await this.trainModel(pair, data, predictionHistory.get(pair) ?? []);
+    }
     return true;
   }
 
-  public trainModel = async (modelPair: CryptoPairs, input: ICyptoCompareData[]): Promise<boolean> => {
-    const modelToTrain = this.modelsMap.get(modelPair);
-
-    if (!modelToTrain) {
-      log(`[**] Model ${modelPair} not found`, Colors.RED);
+  /**
+   * 1) compare saved predictions with real prices; 2) correct the forecast model;
+   * 3) train the DQN on market features + forecast, mixing in real outcomes of its past decisions.
+   */
+  public trainModel = async (
+    pair: CryptoPairs,
+    input: ICyptoCompareData[],
+    predictionHistory: ITensorflowPrediction[] = []
+  ): Promise<boolean> => {
+    if (!this.modelsMap.has(pair)) {
+      log(`[**] Model ${pair} not found`, Colors.RED);
       return false;
     }
 
-    try {
-      const epochs = 50;
-      const batchSize = 128;
-      const timeSteps = cryptoConfig.longTermMinuteWindowPrediction;
-      const { normalizedData } = this.prepareDataset(input);
+    const candles = toOHLCV(input);
+    if (candles.length < Math.max(INDICATOR_WARMUP, this.dqnTimeSteps) + 50) {
+      log(`[**] Not enough candles to train ${pair}`, Colors.RED);
+      return false;
+    }
 
-      // Prepare the data for LSTM
-      const xs = [];
-      const ysRegression = [];
-      const ysClassification = [];
-      for (let i = 0; i < normalizedData.length - timeSteps; i++) {
-        const x = normalizedData.slice(i, i + timeSteps); // Reshape to [timeSteps, features]
-        xs.push(x);
-
-        // Generate labels for next price value (regression)
-        const nextPrice = normalizedData[i + timeSteps][4]; // Use the 'close' price as the label
-        ysRegression.push([nextPrice]); // Use the next price as the label
-
-        // Generate labels for command (classification)
-        const prevPrice = normalizedData[i + timeSteps - 1][4];
-        let command = [0, 0, 0]; // [buy, sell, hold]
-        if (nextPrice > prevPrice) {
-          command = [1, 0, 0]; // Buy
-        } else if (nextPrice < prevPrice) {
-          command = [0, 1, 0]; // Sell
-        } else {
-          command = [0, 0, 1]; // Hold
-        }
-        ysClassification.push(command);
-      }
-
-      // Corrected tensor shape
-      const xsTensor = tf.tensor3d(xs, [xs.length, timeSteps, normalizedData[0].length]);
-      const ysRegressionTensor = tf.tensor2d(ysRegression, [ysRegression.length, 1]); // Single value for regression
-      const ysClassificationTensor = tf.tensor2d(ysClassification, [ysClassification.length, 3]); // One-hot encoded for classification
-
-      log(`[**] Training ${modelPair} model`, Colors.GREEN);
-
-      console.time(`${modelPair}: Training Time`);
-
-      await modelToTrain.fit(
-        xsTensor,
-        { regressionOutput: ysRegressionTensor, classificationOutput: ysClassificationTensor },
-        {
-          epochs,
-          batchSize,
-          callbacks: {
-            onTrainEnd: () => {
-              log("[**] Training completed", Colors.GREEN);
-              console.timeEnd(`${modelPair}: Training Time`);
-            },
-          },
-        }
+    const features = buildMarketFeatures(candles);
+    const feedback = evaluateLivePredictions(predictionHistory, candles, this.horizon);
+    if (feedback.forecast) {
+      const f = feedback.forecast;
+      log(
+        `[**] ${pair} live forecast check on ${f.count} saved predictions: MAE=${f.mae.toFixed(4)}% ` +
+          `(naive ${f.naiveMae.toFixed(4)}%), direction=${(f.directionAccuracy * 100).toFixed(1)}%`,
+        f.mae < f.naiveMae ? Colors.GREEN : Colors.YELLOW
       );
-
-      await this.saveModel(modelPair);
-
-      log(`[**] ${modelPair} Model training completed`, Colors.GREEN);
-      return true;
-    } catch (error) {
-      console.timeEnd(`${modelPair}: Training Time`);
-      console.error("Error during training:", error);
-      return false;
     }
+
+    await this.trainForecast(pair, candles, features, feedback);
+    const forecasts = this.dqnForecastFeature(pair, this.forecastSeries(pair, features));
+
+    return this.trainDQN(pair, candles, forecasts, feedback);
   };
-
-  private async getModelPrediction(
-    model: tfType.LayersModel,
-    input: Pick<ICyptoCompareData, "time" | "high" | "low" | "open" | "close">[],
-    threshold: number
-  ): Promise<{ timestamp: number; predictedValue: number; command: "Buy" | "Sell" | "Hold" }> {
-    const timeSteps = cryptoConfig.longTermMinuteWindowPrediction;
-
-    const { normalizedData, mean, std } = this.prepareDataset(input);
-
-    const xsTensor = this.prepareInputData(normalizedData, timeSteps);
-
-    const [regressionPredictions, classificationPredictions] = model.predict(xsTensor) as tfType.Tensor[];
-
-    const predictedValues = (await regressionPredictions.array()) as number[][];
-
-    const predictedCommands = (await classificationPredictions.array()) as number[][];
-
-    const predictedValue = this.denormalize(predictedValues[predictedValues.length - 1][0], mean[4], std[4]); // Use the 'close' price index for denormalization
-
-    // Predict for 15 minutes using LSTM Model
-    const lstmIndex = xsTensor.shape[0] - 1;
-    const lstmTime = (input[input.length - 1].time + 15 * 60) * 1000; // Predicting for the next 15 minutes
-    const lstmActualValue = input[input.length - 1].close; // Last known price
-
-    const [buy, sell, hold] = predictedCommands[lstmIndex];
-
-    let command: "Buy" | "Sell" | "Hold";
-
-    const profitWhenBuy = (predictedValue - lstmActualValue) / lstmActualValue;
-
-    const profitWhenSell = (lstmActualValue - predictedValue) / lstmActualValue;
-
-    if (buy > sell && buy > hold && profitWhenBuy > threshold) {
-      command = "Buy";
-    } else if (sell > buy && sell > hold && profitWhenSell > threshold) {
-      command = "Sell";
-    } else {
-      command = "Hold";
-    }
-
-    return {
-      timestamp: lstmTime,
-      predictedValue,
-      command,
-    };
-  }
 
   public async predictNextPrices(
     input: Map<CryptoPairs, ICyptoCompareData[]>
@@ -421,64 +517,60 @@ class TensorflowAI {
 
     for (const pair of Object.values(CryptoPairs)) {
       try {
-        const model = await this.modelsMap.get(pair);
-
+        const model = this.modelsMap.get(pair);
         const dataset = input.get(pair);
 
-        if (!model) {
-          log(`[**] Model ${pair} not found`, Colors.RED);
+        if (!model || !dataset) {
+          log(`[**] Model or dataset for ${pair} not found`, Colors.RED);
           continue;
         }
 
-        if (!dataset) {
-          log(`[**] Dataset for ${pair} not found`, Colors.RED);
-          continue;
-        }
+        // the last candle from the API is the still-open current minute: use closed candles only
+        const now = Math.floor(Date.now() / 1000);
+        const candles = toOHLCV(dataset).filter((c) => c.time + 60 <= now);
+        const last = candles[candles.length - 1];
+        const features = buildMarketFeatures(candles);
 
-        // Define a threshold for Buy/Sell/Hold decision
-        const threshold = 0.0000001;
-        //   // Define the network fee as a percentage of the transaction
-        const networkFeePercentage = 0.0005; // 0.05% fee
+        // forecast only for the candles the DQN window needs
+        const rawSeries = this.forecastSeries(pair, features, candles.length - this.dqnTimeSteps);
+        const rawScaled = rawSeries[rawSeries.length - 1];
+        const reliable = this.isForecastReliable(pair) && this.forecastModelsMap.has(pair);
+        const rawReturn = Math.exp(rawScaled / FORECAST_TARGET_SCALE) - 1;
+        // an unproven forecast must not pretend to know the future: fall back to "no change"
+        const predictedReturn = reliable ? rawReturn : 0;
 
-        const feeAdjustedThreshold = threshold + networkFeePercentage;
-
-        const lstm_model_prediction = await this.getModelPrediction(
-          model,
-          dataset.map((data) => ({
-            time: data.time,
-            open: data.open,
-            high: data.high,
-            low: data.low,
-            close: data.close,
-          })),
-          feeAdjustedThreshold
-        );
+        const state = buildInferenceState(candles, this.dqnForecastFeature(pair, rawSeries), this.dqnTimeSteps, 0, 0);
+        const [hold, buy, sell] = this.predictQ(model, state);
+        const action = argmax([hold, buy, sell]) as RLActionIndex;
 
         results.set(pair, {
-          timestamp: Math.floor(Date.now() / 1000) * 1000,
+          timestamp: now * 1000,
           pair,
-          current_value: dataset[dataset.length - 1].close,
-          lstm_timestamp: lstm_model_prediction.timestamp,
-          predicted_value: lstm_model_prediction.predictedValue,
-          predicted_command: lstm_model_prediction.command,
+          current_value: last.close,
+          // prediction is anchored to the close of the last closed candle
+          lstm_timestamp: (last.time + 60 + this.horizon * 60) * 1000,
+          predicted_value: last.close * (1 + predictedReturn),
+          predicted_return: predictedReturn,
+          forecast_raw_return: this.forecastModelsMap.has(pair) ? rawReturn : undefined,
+          forecast_reliable: reliable,
+          predicted_command: RL_ACTION_LABELS[action],
+          q_values: { hold, buy, sell },
         });
       } catch (error) {
         log(`Error while predicting next prices: ${error}`, Colors.RED);
-        continue;
       }
     }
 
     results.forEach((result) => {
-      const currentCurrency = result.current_value;
-
       const now = format(new Date(result.timestamp), "dd/MM/yy HH:mm");
-      const lstmDate = format(new Date(result.lstm_timestamp), "dd/MM/yy HH:mm");
-
-      const predictedValue = result.predicted_value.toFixed(7);
-      const command = result.predicted_command;
+      const horizon = format(new Date(result.lstm_timestamp), "dd/MM/yy HH:mm");
+      const q = result.q_values;
+      const ret = ((result.predicted_return ?? 0) * 100).toFixed(3);
+      const reliability = result.forecast_reliable ? "" : " (forecast unreliable)";
+      const qText = q ? ` Q[H=${q.hold.toFixed(4)} B=${q.buy.toFixed(4)} S=${q.sell.toFixed(4)}]` : "";
 
       log(
-        `[**] ${now} ${result.pair} Current currency: ${currentCurrency}. LSTM: ${command}: ${predictedValue} at ${lstmDate}`,
+        `[**] ${now} ${result.pair} Current: ${result.current_value}. DQN: ${result.predicted_command}. Forecast ~${result.predicted_value.toFixed(4)} (${ret}%) at ${horizon}${reliability}${qText}`,
         getRandomEnumValue(Colors)
       );
     });

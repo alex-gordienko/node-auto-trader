@@ -1,3 +1,4 @@
+import "./src/utils/tfjs-node-compat";
 import express from "express";
 import { exec } from "node:child_process";
 

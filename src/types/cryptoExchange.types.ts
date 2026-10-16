@@ -1,6 +1,34 @@
 import { CryptoBase, CryptoExchangeCoins, CryptoPairs } from "./basic.types";
 
-export interface ICryptoExchangeResponse {
+export interface ICryptoExchangeAvailableCurrenciesResponse {
+    "ticker": string,
+    "name": string,
+    "image": string,
+    "hasExternalId": boolean,
+    "isExtraIdSupported": boolean,
+    "isFiat": boolean,
+    "featured": boolean,
+    "isStable": boolean,
+    "supportsFixedRate": boolean,
+    "network": string,
+    "tokenContract": unknown,
+    "buy": boolean,
+    "sell": boolean,
+    "legacyTicker": string
+  }
+
+export interface ICryptoExchangePossiblePairsResponse {
+  fromCurrency: string,
+  fromNetwork: string,
+  toCurrency: string,
+  toNetwork: string,
+  flow: {
+    standard: boolean,
+    "fixed-rate": boolean
+  }
+}
+
+export interface ICryptoExchangeSwapResponse {
   id: string;
   fromAmount: number;
   toAmount: number;
@@ -33,6 +61,14 @@ export interface ITensorflowPrediction {
   lstm_timestamp: number;
   predicted_value: number;
   predicted_command: string;
+  predicted_return?: number;
+  forecast_raw_return?: number;
+  forecast_reliable?: boolean;
+  q_values?: {
+    hold: number;
+    buy: number;
+    sell: number;
+  };
 }
 
 export interface ICryptoExchangeTransactionsHistory {
@@ -44,5 +80,5 @@ export interface ICryptoExchangeTransactionsHistory {
   walletFrom: string;
   walletTo: string;
   transactionHash: string;
-  networkFee: number | Long | bigint;
+  networkFee: number | bigint;
 }

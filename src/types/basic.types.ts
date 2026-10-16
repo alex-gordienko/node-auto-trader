@@ -23,46 +23,14 @@ export enum CryptoCompareExchange {
 }
 
 export enum CryptoBase {
-	USD = "USD",
-	BTC = "BTC",
-	ETH = "ETH",
 	USDT = "USDT",
-	BNB = "BNB",
-	TRX = "TRX",
-	POLY = "MATIC",
-	XMR = "XMR",
-	WAVES = "WAVES",
+	ETH = "ETH",
 }
 
 export enum CryptoPairs {
-	BTC_USD = "BTC-USD",
-	BTC_ETH = "BTC-ETH",
-	BTC_USDT = "BTC-USDT",
-	BTC_TRX = "BTC-TRX",
-	BTC_POLY = "BTC-MATIC",
-	BTC_XMR = "BTC-XMR",
-	BTC_WAVES = "BTC-WAVES",
-	BTC_TON = "BTC-TON",
+	ETH_USDT = "ETH-USDT"
 }
 
 export enum CryptoExchangeCoins {
-	ETH = "eth",
-	XMR = "xmr",
-	BNB = "bnb",
-	BNB_BSC = "bnbbsc",
-	TRX = "trx",
-	POLY = "matic",
-	WAVES = "waves",
-	BTC = "btc",
-}
-
-export enum CryptoExchangePairs {
-	BTC_USD = "btc_usd",
-	BTC_ETH = "btc_eth",
-	BTC_USDT = "btc_usdt",
-	BTC_TRX = "btc_trx",
-	BTC_POLY = "btc_matic",
-	BTC_XMR = "btc_xmr",
-	BTC_WAVES = "btc_waves",
-	BTC_TON = "btc_ton",
+	ETH_USDT = "eth_usdt"
 }
