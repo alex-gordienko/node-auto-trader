@@ -4,6 +4,7 @@ import * as path from "path";
 import { TransactionResponse } from "ethers";
 
 import { CandleTimeframe, IMarketCandle, MarketSymbol } from "../types/marketData.types";
+import cryptoConfig from "../config/crypto.config";
 import { log, Colors } from "../utils/colored-console";
 import {
   ICryproExchangeWalletHistory,
@@ -32,7 +33,7 @@ class LocalStorageService {
   private storagePath: string;
 
   constructor() {
-    this.storagePath = path.join(`${__dirname}/..`, "Storage");
+    this.storagePath = cryptoConfig.paths.storageDir;
     if (!fs.existsSync(this.storagePath)) {
       fs.mkdirSync(this.storagePath, { recursive: true });
     }

@@ -371,7 +371,7 @@ const runFold = async (
     summary[cost.name] = { ...cost, strategies: rows, dqnBeatsShuffledPct: beatsRandom };
   }
 
-  const dir = `${__dirname}/../Storage/backtest`;
+  const dir = `${cryptoConfig.paths.storageDir}/backtest`;
   fse.ensureDirSync(dir);
   const file = `${dir}/${PAIR}-walkforward-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
   fse.writeJsonSync(

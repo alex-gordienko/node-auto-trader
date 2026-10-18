@@ -82,9 +82,11 @@ const cryptoConfig = {
     maxTrainingSamples: Number(process.env.FORECAST_MAX_TRAINING_SAMPLES || 60000),
   },
 
-  // where models are saved; backtests point it to a separate folder so production models are never overwritten
+  // Data and models live in the project folder (paths from the project root, where yarn scripts run), so the
+  // compiled server (build/) and ts-node use the same files. Backtests point MODELS_DIR to a separate folder.
   paths: {
-    modelsDir: process.env.MODELS_DIR || `${__dirname}/../models`,
+    storageDir: process.env.STORAGE_DIR || path.join(process.cwd(), "src/Storage"),
+    modelsDir: process.env.MODELS_DIR || path.join(process.cwd(), "src/models"),
   },
 
   // Real-time market microstructure recorders (part of the server, or standalone: `yarn collect`). Binance keeps no free history of
@@ -102,8 +104,7 @@ const cryptoConfig = {
     futuresMarketStreamUrl: process.env.COLLECTOR_FUTURES_MARKET_WS || "wss://fstream.binance.com/market/ws",
     // a stream silent for this long is treated as dead and reconnected
     silenceTimeoutSeconds: Number(process.env.COLLECTOR_SILENCE_TIMEOUT || 60),
-    // relative to the project root, so the compiled recorder and the ts-node bot read and write the same folder
-    storageDir: process.env.COLLECTOR_STORAGE_DIR || path.join(process.cwd(), "src/Storage/collectors"),
+    storageDir: process.env.COLLECTOR_STORAGE_DIR || path.join(process.env.STORAGE_DIR || path.join(process.cwd(), "src/Storage"), "collectors"),
   },
 
   // all market data comes from Binance public endpoints, no API key needed

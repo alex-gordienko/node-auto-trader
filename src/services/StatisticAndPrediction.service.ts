@@ -41,7 +41,21 @@ class StatisticAndPredictionService {
     this.autoTrade();
 
     this.autoLogWalletBalances();
+
+    this.trainIfNoModels();
   }
+
+  /**
+   * A fresh server (or a model layout change) starts without trained models: train right away instead of
+   * waiting for the retraining schedule. Trading stays off for those pairs until training succeeds.
+   */
+  private trainIfNoModels = async () => {
+    await TensorflowService.ready;
+    const untrained = Object.values(CryptoPairs).filter((pair) => !TensorflowService.isTrained(pair));
+    if (!untrained.length) return;
+    log(`[**] No trained models for ${untrained.join(", ")}: downloading history and training now`, Colors.YELLOW);
+    await this.retrainAll();
+  };
 
   public stopAllTimers = () => {
     if (this.historyMinutePairTimer) {
@@ -79,6 +93,34 @@ class StatisticAndPredictionService {
     });
   };
 
+  private retrainAll = async () => {
+    if (this.isRetraining) {
+      log(`[**] Previous retraining is still running, skipping this one`, Colors.YELLOW);
+      return;
+    }
+    this.isRetraining = true;
+
+    try {
+      for (const pair of Object.values(CryptoPairs)) {
+        // brings the history up to date first (on a fresh server this downloads it)
+        await MarketDataService.syncAll(pair);
+        const dataset = await MarketDataService.getTrainingDataset(pair);
+        // saved predictions are compared with real prices so the models correct themselves
+        const predictionHistory = await DigitalOceanStorageService.getTensorflowPredictionHistory(pair);
+        log(
+          `[**] Retraining models: ${dataset.minute.length} minute / ${dataset.hour.length} hour candles, ` +
+            `${dataset.futures.length} futures rows, ${predictionHistory.length} saved predictions`,
+          Colors.GREEN
+        );
+        await TensorflowService.trainModel(pair, dataset, predictionHistory);
+      }
+    } catch (error) {
+      log(`[**] Retraining failed: ${error}`, Colors.RED);
+    } finally {
+      this.isRetraining = false;
+    }
+  };
+
   private autoRetrainModels = async () => {
     const unitsForMinutes = cryptoConfig.autoRetrainingMinuteModelInterval.units;
     const intervalForMinutes = cryptoConfig.autoRetrainingMinuteModelInterval.interval;
@@ -86,29 +128,7 @@ class StatisticAndPredictionService {
     log(`[**] Models would be automatically re-trained each ${intervalForMinutes} ${unitsForMinutes}`, Colors.GREEN);
 
     this.retrainingMinuteModelTimer = repeatEvent({
-      callback: async () => {
-        if (this.isRetraining) {
-          log(`[**] Previous retraining is still running, skipping this one`, Colors.YELLOW);
-          return;
-        }
-        this.isRetraining = true;
-
-        try {
-          for (const pair of Object.values(CryptoPairs)) {
-            const dataset = await MarketDataService.getTrainingDataset(pair);
-            // saved predictions are compared with real prices so the models correct themselves
-            const predictionHistory = await DigitalOceanStorageService.getTensorflowPredictionHistory(pair);
-            log(
-              `[**] Retraining models: ${dataset.minute.length} minute / ${dataset.hour.length} hour candles, ` +
-                `${dataset.futures.length} futures rows, ${predictionHistory.length} saved predictions`,
-              Colors.GREEN
-            );
-            await TensorflowService.trainModel(pair, dataset, predictionHistory);
-          }
-        } finally {
-          this.isRetraining = false;
-        }
-      },
+      callback: () => this.retrainAll(),
       units: unitsForMinutes,
       interval: intervalForMinutes,
     });
@@ -161,7 +181,10 @@ class StatisticAndPredictionService {
             const position = prediction.position ?? 0;
             const sinceDecision = Date.now() - (this.lastDecisionAt.get(pair) ?? 0);
 
-            if (sinceDecision < cryptoConfig.rl.decisionMinutes * 60 * 1000 - 30 * 1000) {
+            if (!TensorflowService.isTrained(pair)) {
+              log(`[**] ${pair}: no trained model yet, not trading`, Colors.YELLOW);
+              continue;
+            } else if (sinceDecision < cryptoConfig.rl.decisionMinutes * 60 * 1000 - 30 * 1000) {
               // predictions are saved every run for self-correction, but trades follow the DQN's training cadence
               log(
                 `[**] Next trading decision in ${Math.ceil((cryptoConfig.rl.decisionMinutes * 60 * 1000 - sinceDecision) / 60000)} min`,

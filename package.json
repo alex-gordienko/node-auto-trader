@@ -7,7 +7,9 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "start": "tsc && cp ./xmrig-ubuntu ./build/xmrig-ubuntu && node build/index.js",
+    "build": "tsc && cp ./xmrig-ubuntu ./build/xmrig-ubuntu",
+    "start": "yarn build && node build/index.js",
+    "serve": "node build/index.js",
     "dev": "npx nodemon",
     "statistic": "cd statistic && yarn start",
     "lint": "eslint . --ext .ts",
@@ -15,7 +17,7 @@
     "backfill:binance": "ts-node --transpile-only src/scripts/binance-backfill.ts",
     "backtest": "MODELS_DIR=\"$PWD/src/Storage/backtest/models\" NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/backtest.ts",
     "collect": "ts-node --transpile-only src/collector.ts",
-    "collect:start": "tsc; node build/src/collector.js",
+    "collect:start": "tsc && node build/src/collector.js",
     "collect:stats": "ts-node --transpile-only src/scripts/collector-stats.ts"
   },
   "dependencies": {

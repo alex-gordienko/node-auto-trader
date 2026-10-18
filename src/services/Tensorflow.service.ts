@@ -88,11 +88,21 @@ class TensorflowAI {
   // DQN inputs are standardized with the statistics of its first training data
   private dqnScalerMap: Map<CryptoPairs, IColumnScaler> = new Map();
 
+  // pairs whose DQN has learned something: loaded from disk or retrained in this run
+  private trainedPairs: Set<CryptoPairs> = new Set();
+  /** Resolves once saved models are loaded (or fresh ones created). */
+  public readonly ready: Promise<void>;
+
   constructor() {
     log("[*] Initializing Tensorflow Service (forecast + DQN)", Colors.GREEN);
     fse.ensureDirSync(this.dqnDirectory);
     fse.ensureDirSync(this.forecastDirectory);
-    this.loadModels();
+    this.ready = this.loadModels();
+  }
+
+  /** False for a freshly created DQN: it would trade on random weights. */
+  public isTrained(pair: CryptoPairs): boolean {
+    return this.trainedPairs.has(pair);
   }
 
   private get dqnTimeSteps() {
@@ -233,6 +243,7 @@ class TensorflowAI {
         model = null;
       } else {
         this.dqnScalerMap.set(pair, fse.readJsonSync(`${dir}/scaler.json`));
+        this.trainedPairs.add(pair);
         this.compileDQN(model);
         log(`[**] DQN model ${pair} loaded from file`, Colors.GREEN);
       }
@@ -1025,6 +1036,7 @@ class TensorflowAI {
     }
     this.modelsMap.set(pair, policy);
     this.targetModelsMap.set(pair, target);
+    this.trainedPairs.add(pair);
     old.forEach((model) => model?.dispose());
     log(`[**] ${pair}: retrained models are live`, Colors.GREEN);
 
