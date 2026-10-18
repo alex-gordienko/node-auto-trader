@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import path from "path";
 dotenv.config();
 
 /** Sorted unique horizons that always include the main one. */
@@ -84,6 +85,23 @@ const cryptoConfig = {
   // where models are saved; backtests point it to a separate folder so production models are never overwritten
   paths: {
     modelsDir: process.env.MODELS_DIR || `${__dirname}/../models`,
+  },
+
+  // Real-time market microstructure recorders (run separately: `yarn collect`). Binance keeps no free history of
+  // order books / trades streams, so everything a future order-flow model trains on has to be recorded here.
+  collectors: {
+    symbols: (process.env.COLLECTOR_SYMBOLS || "ETH-USDT,BTC-USDT").split(",").filter(Boolean),
+    // order book: top N levels, one snapshot per interval (the stream itself updates every 100 ms)
+    depthLevels: Number(process.env.COLLECTOR_DEPTH_LEVELS || 20),
+    depthSnapshotMs: Number(process.env.COLLECTOR_DEPTH_SNAPSHOT_MS || 1000),
+    spotStreamUrl: process.env.COLLECTOR_SPOT_WS || "wss://data-stream.binance.vision/ws",
+    // Binance serves futures order books on /public and trades / liquidations on /market
+    futuresPublicStreamUrl: process.env.COLLECTOR_FUTURES_PUBLIC_WS || "wss://fstream.binance.com/public/ws",
+    futuresMarketStreamUrl: process.env.COLLECTOR_FUTURES_MARKET_WS || "wss://fstream.binance.com/market/ws",
+    // a stream silent for this long is treated as dead and reconnected
+    silenceTimeoutSeconds: Number(process.env.COLLECTOR_SILENCE_TIMEOUT || 60),
+    // relative to the project root, so the compiled recorder and the ts-node bot read and write the same folder
+    storageDir: process.env.COLLECTOR_STORAGE_DIR || path.join(process.cwd(), "src/Storage/collectors"),
   },
 
   // all market data comes from Binance public endpoints, no API key needed
