@@ -16,8 +16,6 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "backfill:binance": "ts-node --transpile-only src/scripts/binance-backfill.ts",
     "backtest": "MODELS_DIR=\"$PWD/src/Storage/backtest/models\" NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/backtest.ts",
-    "collect": "ts-node --transpile-only src/collector.ts",
-    "collect:start": "tsc && node build/src/collector.js",
     "collect:stats": "ts-node --transpile-only src/scripts/collector-stats.ts"
   },
   "dependencies": {

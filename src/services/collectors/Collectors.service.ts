@@ -8,8 +8,9 @@ const RESTART_DELAY_MS = 10_000;
 const STOP_TIMEOUT_MS = 15_000;
 
 /**
- * Runs the market data recorders as part of the server, in a worker thread (see collectors.worker.ts),
- * restarts them if the worker crashes and stops them cleanly with the server.
+ * Runs the market data recorders as part of the server: a worker thread inside the same Node process
+ * (see collectors.worker.ts), not a separate process. It has its own event loop, so model training on the
+ * main thread does not delay WebSocket data. Restarts the worker if it crashes, stops it with the server.
  */
 class CollectorsService {
   private worker: Worker | null = null;
@@ -17,8 +18,8 @@ class CollectorsService {
   private locked = false;
 
   public start(): void {
-    if (!cryptoConfig.collectors.embedded) {
-      log("[collector] Embedded recorders are disabled (COLLECTORS_EMBEDDED=false)", Colors.YELLOW);
+    if (!cryptoConfig.collectors.enabled) {
+      log("[collector] Recorders are disabled (COLLECTORS_ENABLED=false)", Colors.YELLOW);
       return;
     }
     this.spawn();

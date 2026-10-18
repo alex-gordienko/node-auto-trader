@@ -27,7 +27,7 @@ const isAlive = (pid: number): boolean => {
 
 /**
  * Takes the storage folder for this process. Two recorders writing the same files would corrupt them, so if
- * another live process (e.g. a standalone `yarn collect` next to the server) holds the lock, nothing starts.
+ * another live server process (e.g. a second instance started on the same folder) holds the lock, nothing starts.
  */
 const acquireLock = (): string | null => {
   const dir = cryptoConfig.collectors.storageDir;

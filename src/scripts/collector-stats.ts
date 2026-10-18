@@ -14,7 +14,7 @@ const iso = (ms: number) => new Date(ms).toISOString().replace("T", " ").slice(0
 
 (async () => {
   if (!fs.existsSync(root)) {
-    console.log(`Nothing recorded yet in ${root}. Start the collectors with \`yarn collect\`.`);
+    console.log(`Nothing recorded yet in ${root}. The recorders start together with the server (yarn start).`);
     return;
   }
 
