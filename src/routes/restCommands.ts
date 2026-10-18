@@ -3,14 +3,13 @@ import { format } from "date-fns";
 import routes from "../config/routes.config";
 
 import TensorflowService from "../services/Tensorflow.service";
-import StatisticAndPredictionService from "../services/StatisticAndPrediction.service";
+import MarketDataService from "../services/MarketData.service";
 // import DigitalOceanStorageService from "../services/DigitalOcean.storage.service";
 import DigitalOceanStorageService from "../services/Local.storage.service";
 import { CryptoPairs } from "../types/basic.types";
 import { Colors, log } from "../utils/colored-console";
-import { ICyptoCompareData } from "../types/cryptoCompare.types";
+import { IMarketDataset } from "../types/marketData.types";
 import { ITensorflowPrediction } from "../types/cryptoExchange.types";
-import cryptoConfig from "../config/crypto.config";
 
 export default () => {
   const router = Router();
@@ -24,50 +23,47 @@ export default () => {
   });
 
   router.get(routes.REST.LEARN_TENSORFLOW, async (req, res) => {
-    const trainingDataset: Map<CryptoPairs, ICyptoCompareData[]> = new Map();
+    const datasets: Map<CryptoPairs, IMarketDataset> = new Map();
     const predictionHistory: Map<CryptoPairs, ITensorflowPrediction[]> = new Map();
 
     for (const pair of Object.values(CryptoPairs)) {
-      const trainData = await DigitalOceanStorageService.getTradingHistory(pair);
+      const dataset = await MarketDataService.getTrainingDataset(pair);
       predictionHistory.set(pair, await DigitalOceanStorageService.getTensorflowPredictionHistory(pair));
 
-      if (!trainData) {
+      if (!dataset.minute.length) {
         log(`No trading history for ${pair}`, Colors.RED);
         continue;
       }
 
-      trainingDataset.set(pair, trainData);
+      datasets.set(pair, dataset);
     }
 
-    TensorflowService.trainAllModels(trainingDataset, predictionHistory);
+    TensorflowService.trainAllModels(datasets, predictionHistory);
 
     res.json({
       status: "ok",
       message: "Training model's started",
       ...Object.fromEntries(
-        Object.values(CryptoPairs).map((pair) => [
-          pair,
-          trainingDataset.has(pair) ? "Training started" : "No training data",
-        ])
+        Object.values(CryptoPairs).map((pair) => [pair, datasets.has(pair) ? "Training started" : "No training data"])
       ),
     });
   });
 
   router.get(routes.REST.GET_PREDICTION, async (req, res) => {
-    const trainingDataset: Map<CryptoPairs, ICyptoCompareData[]> = new Map();
+    const datasets: Map<CryptoPairs, IMarketDataset> = new Map();
 
     for (const pair of Object.values(CryptoPairs)) {
-      const candles = await StatisticAndPredictionService.syncCandles(pair);
+      const dataset = await MarketDataService.getInferenceDataset(pair);
 
-      if (!candles.length) {
+      if (!dataset.minute.length) {
         log(`No trading history for ${pair}`, Colors.RED);
         continue;
       }
 
-      trainingDataset.set(pair, candles.slice(-cryptoConfig.cryptoCompare.inferenceCandles));
+      datasets.set(pair, dataset);
     }
 
-    const predictionByMinute = await TensorflowService.predictNextPrices(trainingDataset);
+    const predictionByMinute = await TensorflowService.predictNextPrices(datasets);
 
     res.json({
       status: "ok",
@@ -77,19 +73,14 @@ export default () => {
   });
 
   router.get(routes.REST.SAVE_HISTORY, async (req, res) => {
-    const links: Map<CryptoPairs, string> = new Map();
-
     for (const pair of Object.values(CryptoPairs)) {
-      // fetches only the missing minutes and saves them to the dataset
-      const candles = await StatisticAndPredictionService.syncCandles(pair);
-
-      links.set(pair, candles.length ? `datasets/${pair}-trading-history.json` : "Not saved");
+      // fetches only the missing candles / futures rows and saves them
+      await MarketDataService.syncAll(pair);
     }
 
     res.json({
       status: "ok",
-      message: "Trading history saved",
-      ...Object.fromEntries(links),
+      message: "Market data updated",
     });
   });
 

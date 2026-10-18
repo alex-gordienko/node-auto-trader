@@ -1,4 +1,4 @@
-import CryptoCompareService from "./CryptoCompare.service";
+import MarketDataService from "./MarketData.service";
 import CryptoExchangeService from "./CryptoExchange.service";
 // import DigitalOceanStorageService from "./DigitalOcean.storage.service";
 import DigitalOceanStorageService from "./Local.storage.service";
@@ -11,7 +11,10 @@ import { Colors, log } from "../utils/colored-console";
 import repeatEvent from "../utils/timer";
 import { CryptoBase, CryptoExchangeCoins, CryptoPairs } from "../types/basic.types";
 import { ICryproExchangeWalletHistory } from "../types/cryptoExchange.types";
-import { ICyptoCompareData } from "../types/cryptoCompare.types";
+import { IMarketDataset } from "../types/marketData.types";
+
+// the bot's minimal swap (~$15): smaller ETH balances count as "not in position"
+const MIN_SWAP_USD = 15;
 
 class StatisticAndPredictionService {
   private isAbleToTrade: boolean = true;
@@ -26,8 +29,9 @@ class StatisticAndPredictionService {
 
   private walletETHtimer: NodeJS.Timeout | null = null;
 
-  // closed minute candles kept in memory, so each API call only downloads what is missing
-  private candlesCache: Map<CryptoPairs, ICyptoCompareData[]> = new Map();
+  // when the DQN last made a trading decision, per pair: trades happen at most once per rl.decisionMinutes
+  private lastDecisionAt: Map<CryptoPairs, number> = new Map();
+
 
   constructor() {
     this.autoRetrainModels();
@@ -64,9 +68,9 @@ class StatisticAndPredictionService {
 
     this.historyMinutePairTimer = repeatEvent({
       callback: async () => {
-        // usually a no-op or a tiny request: autoTrade keeps the dataset up to date incrementally
+        // usually a no-op or a tiny request: autoTrade keeps the datasets up to date incrementally
         for (const pair of Object.values(CryptoPairs)) {
-          await this.syncCandles(pair);
+          await MarketDataService.syncAll(pair);
         }
       },
       units: unitsForMinutes,
@@ -85,14 +89,15 @@ class StatisticAndPredictionService {
         this.isAbleToTrade = false;
 
         for (const pair of Object.values(CryptoPairs)) {
-          const trainData = await DigitalOceanStorageService.getTradingHistory(pair);
+          const dataset = await MarketDataService.getTrainingDataset(pair);
           // saved predictions are compared with real prices so the models correct themselves
           const predictionHistory = await DigitalOceanStorageService.getTensorflowPredictionHistory(pair);
           log(
-            `[**] Retraining models with dataset length = ${trainData.length}, saved predictions = ${predictionHistory.length}`,
+            `[**] Retraining models: ${dataset.minute.length} minute / ${dataset.hour.length} hour candles, ` +
+              `${dataset.futures.length} futures rows, ${predictionHistory.length} saved predictions`,
             Colors.GREEN
           );
-          await TensorflowService.trainModel(pair, trainData, predictionHistory);
+          await TensorflowService.trainModel(pair, dataset, predictionHistory);
         }
 
         this.isAbleToTrade = true;
@@ -109,20 +114,29 @@ class StatisticAndPredictionService {
 
     this.tradingTimer = repeatEvent({
       callback: async () => {
-        const trainingDataset: Map<CryptoPairs, ICyptoCompareData[]> = new Map();
+        const datasets: Map<CryptoPairs, IMarketDataset> = new Map();
 
         for (const pair of Object.values(CryptoPairs)) {
-          const candles = await this.syncCandles(pair);
+          // incremental update: only candles / futures rows missing since the last call are requested
+          const dataset = await MarketDataService.getInferenceDataset(pair);
 
-          if (candles.length < cryptoConfig.cryptoCompare.inferenceCandles / 2) {
+          if (dataset.minute.length < cryptoConfig.marketData.inferenceCandles / 2) {
             log(`No trading history for ${pair}`, Colors.RED);
             continue;
           }
 
-          trainingDataset.set(pair, candles.slice(-cryptoConfig.cryptoCompare.inferenceCandles));
+          datasets.set(pair, dataset);
         }
 
-        const predictionByMinute = await TensorflowService.predictNextPrices(trainingDataset);
+        // the DQN decides from what the bot actually holds: ETH worth more than the minimal swap = in position
+        const positions = new Map<CryptoPairs, { position: number; entryPrice: number }>();
+        const ethBalance = await EtheriumWalletService.getBalance();
+        for (const [pair, dataset] of datasets) {
+          const price = dataset.minute[dataset.minute.length - 1]?.close ?? 0;
+          positions.set(pair, { position: ethBalance * price >= MIN_SWAP_USD ? 1 : 0, entryPrice: 0 });
+        }
+
+        const predictionByMinute = await TensorflowService.predictNextPrices(datasets, positions);
 
         for (const predictionMap of predictionByMinute) {
           const [pair, prediction] = predictionMap;
@@ -137,13 +151,23 @@ class StatisticAndPredictionService {
             await this.possibleProfit(prediction.predicted_command, currentPrice, predictedPrice, prediction.q_values);
 
             const ETHBalance = await EtheriumWalletService.getBalance();
+            const position = prediction.position ?? 0;
+            const sinceDecision = Date.now() - (this.lastDecisionAt.get(pair) ?? 0);
 
             if (!this.isAbleToTrade) {
               log(`[**] Cannot trade now, because models are retraining`, Colors.RED);
               continue;
-            } else if (prediction.predicted_command === "Buy") {
-              // The lowest amount of ETH (~$15)
-              if (ETHBalance >= 0.0056) {
+            } else if (sinceDecision < cryptoConfig.rl.decisionMinutes * 60 * 1000 - 30 * 1000) {
+              // predictions are saved every run for self-correction, but trades follow the DQN's training cadence
+              log(`[**] Next trading decision in ${Math.ceil((cryptoConfig.rl.decisionMinutes * 60 * 1000 - sinceDecision) / 60000)} min`, Colors.YELLOW);
+              continue;
+            }
+
+            this.lastDecisionAt.set(pair, Date.now());
+
+            if (prediction.predicted_command === "Buy") {
+              // buy only when not holding ETH yet (the USDT balance is checked by the exchange)
+              if (position === 0) {
                 log(`[**] Buying ETH by USDT`, Colors.GREEN);
                 const transaction = await CryptoExchangeService.swapCoins(CryptoBase.USDT, CryptoBase.ETH);
 
@@ -157,11 +181,10 @@ class StatisticAndPredictionService {
                   });
                 }
               } else {
-                log(`[**] Cannot buy ETH, because USDT amount is too low (${ETHBalance})`, Colors.RED);
+                log(`[**] Already holding ETH (${ETHBalance}), nothing to buy`, Colors.YELLOW);
               }
             } else if (prediction.predicted_command === "Sell") {
-              // The lowest amount of ETH (~$15)
-              if (ETHBalance >= 0.0056) {
+              if (position === 1) {
                 log(`[**] Selling ETH for USDT`, Colors.GREEN);
                 const transaction = await CryptoExchangeService.swapCoins(CryptoBase.ETH, CryptoBase.USDT);
 
@@ -188,46 +211,6 @@ class StatisticAndPredictionService {
     });
   };
 
-  /**
-   * Downloads only the minutes missing since the last stored candle (1 API call, up to 2000 rows),
-   * saves them to the dataset and returns all cached closed candles, oldest first.
-   */
-  public syncCandles = async (pair: CryptoPairs): Promise<ICyptoCompareData[]> => {
-    let cached = this.candlesCache.get(pair);
-    if (!cached) {
-      cached = (await DigitalOceanStorageService.getTradingHistory(pair)).sort((a, b) => a.time - b.time);
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-    const lastTime = cached.length ? cached[cached.length - 1].time : 0;
-    const missingMinutes = lastTime
-      ? Math.floor((now - lastTime) / 60) - 1
-      : cryptoConfig.requestLimitMinutePairModelTraining;
-
-    if (missingMinutes > 0) {
-      const base = pair.split("-")[0] as CryptoBase;
-      const to = pair.split("-")[1] as CryptoBase;
-      // +1 to include the currently open minute, which is dropped below
-      const response = await CryptoCompareService.getMinutePairOHLCV(base, to, missingMinutes + 1);
-
-      if (response) {
-        // never store the still-open minute: its close would be frozen with a wrong value
-        const closed = response.Data.Data.filter((c) => c.time > lastTime && c.time + 60 <= now && c.close > 0);
-        if (closed.length) {
-          response.Data.Data = closed;
-          await DigitalOceanStorageService.pushTradingHistory(pair, response);
-          cached = [...cached, ...closed];
-        }
-      }
-    }
-
-    // memory only needs enough for inference; the full history lives in storage
-    const keep = Math.max(cryptoConfig.requestLimitMinutePairModelTraining, cryptoConfig.cryptoCompare.inferenceCandles);
-    cached = cached.slice(-keep);
-    this.candlesCache.set(pair, cached);
-    return cached;
-  };
-
   private autoLogWalletBalances = async () => {
     const units = cryptoConfig.autoUpdateWalletBalanceInterval.units;
     const interval = cryptoConfig.autoUpdateWalletBalanceInterval.interval;
@@ -242,8 +225,8 @@ class StatisticAndPredictionService {
         // get current balance
         const balanceETH = await EtheriumWalletService.getBalance();
 
-        const ETHtoUSD = await CryptoCompareService.getCurrentPrice(CryptoBase.ETH, CryptoBase.USDT);
-        const USDtoETH = await CryptoCompareService.getCurrentPrice(CryptoBase.USDT, CryptoBase.ETH);
+        const ETHtoUSD = await MarketDataService.getCurrentPrice(CryptoBase.ETH, CryptoBase.USDT);
+        const USDtoETH = await MarketDataService.getCurrentPrice(CryptoBase.USDT, CryptoBase.ETH);
 
         if (ETHtoUSD === null || USDtoETH === null) {
           log(`Cannot get current price for ETH (${ETHtoUSD}) or USDT (${USDtoETH})`, Colors.RED);

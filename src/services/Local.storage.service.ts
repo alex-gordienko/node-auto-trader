@@ -3,7 +3,7 @@ import * as path from "path";
 
 import { TransactionResponse } from "ethers";
 
-import { ICyptoCompareData, ICyptoCompareHistoryMinutePair } from "../types/cryptoCompare.types";
+import { CandleTimeframe, IMarketCandle, MarketSymbol } from "../types/marketData.types";
 import { log, Colors } from "../utils/colored-console";
 import {
   ICryproExchangeWalletHistory,
@@ -13,6 +13,10 @@ import {
 } from "../types/cryptoExchange.types";
 import { CryptoBase, CryptoPairs } from "../types/basic.types";
 import EtheriumWalletService from "./EtheriumWallet.service";
+
+// "1m" / "1h" candles keep the folder names of the first Binance datasets
+export type MarketSeries = "1m" | "1h" | "futures-metrics" | "funding";
+const CANDLE_SERIES: Record<CandleTimeframe, MarketSeries> = { minute: "1m", hour: "1h" };
 
 interface ITransactionHistoryETHProps {
   from: CryptoBase;
@@ -75,45 +79,71 @@ class LocalStorageService {
     }
   };
 
-  public pushTradingHistory = async (
-    name: CryptoPairs,
-    data: ICyptoCompareHistoryMinutePair
-  ): Promise<string | null> => {
-    const fileName = `datasets/${name}-trading-history.json`;
+  // ---------- Binance market data: one file per month per series ----------
 
-    const newDataMap = new Map<number, ICyptoCompareData>(data.Data.Data.map((d) => [d.time, d]));
+  private seriesDir = (symbol: MarketSymbol, series: MarketSeries) => path.join("datasets", "binance", symbol, series);
 
-    let savedDataMap = await this.getSavedFile<ICyptoCompareData>(fileName);
+  private monthKey = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString().slice(0, 7);
+
+  /**
+   * Merges rows (by `time`) into monthly files, so a 10-minute update rewrites only the current month.
+   * Existing rows are overwritten, so re-downloading enriches older data with new fields.
+   */
+  public pushSeries = async <T extends { time: number }>(symbol: MarketSymbol, series: MarketSeries, rows: T[]): Promise<number> => {
+    if (!rows.length) return 0;
+    const dir = this.seriesDir(symbol, series);
+    fs.mkdirSync(path.join(this.storagePath, dir), { recursive: true });
+
+    const byMonth = new Map<string, T[]>();
+    rows.forEach((row) => {
+      const key = this.monthKey(row.time);
+      byMonth.set(key, [...(byMonth.get(key) ?? []), row]);
+    });
 
     let newRowsCount = 0;
-    if (savedDataMap) {
-      newDataMap.forEach((value, key) => {
-        if (!savedDataMap!.has(key)) {
-          savedDataMap!.set(key, value);
-          newRowsCount++;
-        }
+    for (const [month, monthRows] of byMonth) {
+      const fileName = path.join(dir, `${month}.json`);
+      const saved = fs.existsSync(path.join(this.storagePath, fileName))
+        ? ((await this.getSavedFile<T>(fileName)) ?? new Map<number, T>())
+        : new Map<number, T>();
+
+      monthRows.forEach((row) => {
+        if (!saved.has(row.time)) newRowsCount++;
+        saved.set(row.time, row);
       });
-    } else {
-      log("[**] No saved file found", Colors.BLUE);
-      savedDataMap = newDataMap;
+      const sorted = Array.from(saved).sort((x, y) => x[0] - y[0]);
+      await this.uploadFile(fileName, JSON.stringify(sorted));
     }
 
-    log(`[**] ${name}: New rows count: ${newRowsCount}. Total rows count: ${savedDataMap?.size || 0}`, Colors.BLUE);
-
-    return this.uploadFile(fileName, JSON.stringify(Array.from(savedDataMap)));
+    log(`[**] ${symbol} ${series}: ${newRowsCount} new rows in ${byMonth.size} month file(s)`, Colors.BLUE);
+    return newRowsCount;
   };
 
-  public getTradingHistory = async (historyName: CryptoPairs): Promise<ICyptoCompareData[]> => {
-    const fileName = `datasets/${historyName}-trading-history.json`;
+  /** Rows since `sinceSec` (reads only the month files it needs), oldest first. */
+  public getSeries = async <T extends { time: number }>(symbol: MarketSymbol, series: MarketSeries, sinceSec = 0): Promise<T[]> => {
+    const dir = this.seriesDir(symbol, series);
+    const fullDir = path.join(this.storagePath, dir);
+    if (!fs.existsSync(fullDir)) return [];
 
-    const result = await this.getSavedFile<ICyptoCompareData>(fileName);
+    const sinceMonth = this.monthKey(sinceSec);
+    const files = fs
+      .readdirSync(fullDir)
+      .filter((f) => f.endsWith(".json") && f.slice(0, 7) >= sinceMonth)
+      .sort();
 
-    if (!result) {
-      return [];
+    const result: T[] = [];
+    for (const file of files) {
+      const saved = await this.getSavedFile<T>(path.join(dir, file));
+      saved?.forEach((row) => row.time >= sinceSec && result.push(row));
     }
-
-    return Array.from(result.values());
+    return result.sort((x, y) => x.time - y.time);
   };
+
+  public pushCandles = (symbol: MarketSymbol, timeframe: CandleTimeframe, candles: IMarketCandle[]) =>
+    this.pushSeries(symbol, CANDLE_SERIES[timeframe], candles);
+
+  public getCandles = (symbol: MarketSymbol, timeframe: CandleTimeframe, sinceSec = 0) =>
+    this.getSeries<IMarketCandle>(symbol, CANDLE_SERIES[timeframe], sinceSec);
 
   public pushTensorflowPredictionHistory = async (
     pair: CryptoPairs,

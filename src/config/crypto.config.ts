@@ -1,10 +1,13 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+/** Sorted unique horizons that always include the main one. */
+const parseHorizons = (value: string, main: number): number[] =>
+  Array.from(new Set([...value.split(",").map(Number).filter((v) => v > 0), main])).sort((a, b) => a - b);
+
 const cryptoConfig = {
   useGPU: process.env.USE_GPU === "true" || false,
   // api-keys
-  cryptoCompareApiKey: process.env.CRYPTO_COMPARE_API_KEY || "YOUR_API_KEY", // get currency rates
   changeNowApiKey: process.env.CHANGE_NOW_API || "YOUR_API_KEY", // exchange currencies
 
   // providers api-keys
@@ -20,9 +23,8 @@ const cryptoConfig = {
   etheriumPrivateKey: process.env.ETHERIUM_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Etherium from Atomic
   wavesPrivateKey: process.env.WAVES_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Waves from Atomic
 
-  shortTermMinuteWindowPrediction: Number(process.env.REQUEST_LIMIT_SHORT_TERM_PREDICTION || 5),
+  // DQN looks at this many minutes
   longTermMinuteWindowPrediction: Number(process.env.REQUEST_LIMIT_LONG_TERM_PREDICTION || 15),
-  requestLimitMinutePairModelTraining: Number(process.env.REQUEST_LIMIT_TRAINING || 2000),
 
   autoPredictionInterval: {
     units: (process.env.AUTO_PREDICTION_INTERVAL_UNITS || "minutes") as "minutes" | "hours",
@@ -47,32 +49,97 @@ const cryptoConfig = {
   environment: process.env.ENVIRONMENT || "development",
 
   forecast: {
+    // main horizon: shown as predicted_value and used to judge DQN decisions
     horizonMinutes: Number(process.env.FORECAST_HORIZON_MINUTES || 15),
-    windowSize: Number(process.env.FORECAST_WINDOW_SIZE || 30),
-    epochs: Number(process.env.FORECAST_EPOCHS || 30),
+    // price path: return is forecast for each of these horizons; max/min and their timing within the longest one
+    horizons: parseHorizons(process.env.FORECAST_HORIZONS || "5,15,30,60,120", Number(process.env.FORECAST_HORIZON_MINUTES || 15)),
+    windowSize: Number(process.env.FORECAST_WINDOW_SIZE || 60),
+    // hourly candles seen by the forecast (48h = two daily cycles)
+    hourWindowSize: Number(process.env.FORECAST_HOUR_WINDOW_SIZE || 48),
+    epochs: Number(process.env.FORECAST_EPOCHS || 80),
+    // stop when validation has not improved for this many epochs; the best epoch's weights are restored
+    patience: Number(process.env.FORECAST_PATIENCE || 8),
+    batchSize: Number(process.env.FORECAST_BATCH_SIZE || 256),
+    // take every N-th minute as a sample: neighbours are near-duplicates, so this covers more history per sample
+    sampleStride: Number(process.env.FORECAST_SAMPLE_STRIDE || 2),
     learningRate: Number(process.env.FORECAST_LEARNING_RATE || 0.001),
+    // Network size. Measured on 90 days of ETH-USDT (2026-10-17), evaluation part:
+    //   64/1 layer, no LayerNorm  → range IC 0.27–0.29, ~6 min
+    //   64/1 layer + LayerNorm    → range IC 0.26–0.27, ~20 min
+    //   128/2 layers + LayerNorm  → range IC 0.19–0.24, ~1h48m (overfits)
+    // so the small network is the default; change only if the evaluation numbers improve.
+    network: {
+      minuteUnits: Number(process.env.FORECAST_MINUTE_UNITS || 64),
+      minuteLayers: Number(process.env.FORECAST_MINUTE_LAYERS || 1),
+      hourUnits: Number(process.env.FORECAST_HOUR_UNITS || 32),
+      denseUnits: Number(process.env.FORECAST_DENSE_UNITS || 64),
+      dropout: Number(process.env.FORECAST_DROPOUT || 0.2),
+      l2: Number(process.env.FORECAST_L2 || 1e-4),
+      layerNorm: (process.env.FORECAST_LAYER_NORM || "false") === "true",
+    },
+    // newest samples used per training, keeps time and memory bounded on long histories
+    maxTrainingSamples: Number(process.env.FORECAST_MAX_TRAINING_SAMPLES || 60000),
   },
 
-  cryptoCompare: {
-    // candles kept for inference (indicators need warmup + window)
-    inferenceCandles: Number(process.env.CRYPTO_COMPARE_INFERENCE_CANDLES || 200),
-    priceCacheTtlSeconds: Number(process.env.CRYPTO_COMPARE_PRICE_CACHE_TTL || 120),
-    // pause after a rate-limit response
-    rateLimitCooldownMinutes: Number(process.env.CRYPTO_COMPARE_RATE_LIMIT_COOLDOWN || 60),
+  // where models are saved; backtests point it to a separate folder so production models are never overwritten
+  paths: {
+    modelsDir: process.env.MODELS_DIR || `${__dirname}/../models`,
+  },
+
+  // all market data comes from Binance public endpoints, no API key needed
+  marketData: {
+    // spot market-data-only mirror first, main API as a fallback
+    binanceApiUrls: (process.env.BINANCE_API_URLS || "https://data-api.binance.vision,https://api.binance.com").split(","),
+    binanceFuturesApiUrl: process.env.BINANCE_FUTURES_API_URL || "https://fapi.binance.com",
+    binanceArchiveUrl: process.env.BINANCE_ARCHIVE_URL || "https://data.binance.vision",
+    // markets the traded pair is compared with (ETH usually follows BTC)
+    referencePairs: (process.env.REFERENCE_PAIRS || "BTC-USDT").split(",").filter(Boolean),
+    // futures open interest, long/short ratios and funding as extra inputs
+    useFutures: (process.env.USE_FUTURES_DATA || "true") === "true",
+    // initial history loaded from Binance archives when the dataset is empty
+    backfillMinuteDays: Number(process.env.BINANCE_BACKFILL_MINUTE_DAYS || 90),
+    backfillHourDays: Number(process.env.BINANCE_BACKFILL_HOUR_DAYS || 365),
+    // minute history loaded for each retraining (DQN episodes are random segments of it)
+    trainingMinuteDays: Number(process.env.TRAINING_MINUTE_DAYS || 90),
+    // candles kept in memory for inference (indicators need warmup + window)
+    inferenceCandles: Number(process.env.INFERENCE_CANDLES || 300),
+    priceCacheTtlSeconds: Number(process.env.PRICE_CACHE_TTL || 120),
   },
 
   rl: {
     learningRate: Number(process.env.RL_LEARNING_RATE || 0.0005),
+    network: {
+      convFilters: Number(process.env.RL_CONV_FILTERS || 32),
+      lstmUnits: Number(process.env.RL_LSTM_UNITS || 32),
+      denseUnits: Number(process.env.RL_DENSE_UNITS || 32),
+      layerNorm: (process.env.RL_LAYER_NORM || "false") === "true",
+    },
+    // Reward = position × (return − average market drift of the training data). Without this the DQN learns the
+    // trend of its training period ("always buy" after a rising month) instead of timing.
+    removeDrift: (process.env.RL_REMOVE_DRIFT || "true") === "true",
+    // rewards are price returns (~0.0001); scaling them to percent keeps Q-values in a range the network learns well
+    rewardScale: Number(process.env.RL_REWARD_SCALE || 100),
     gamma: Number(process.env.RL_GAMMA || 0.95),
     epsilonStart: Number(process.env.RL_EPSILON_START || 1),
     epsilonMin: Number(process.env.RL_EPSILON_MIN || 0.05),
-    epsilonDecay: Number(process.env.RL_EPSILON_DECAY || 0.97),
-    replaySize: Number(process.env.RL_REPLAY_SIZE || 5000),
+    // share of training after which exploration reaches epsilonMin (linear decrease);
+    // the rest of training the agent mostly follows and corrects its own decisions
+    explorationShare: Number(process.env.RL_EXPLORATION_SHARE || 0.6),
+    // experience the DQN remembers and learns from (≈ the last 25 episodes of 2000 steps)
+    replaySize: Number(process.env.RL_REPLAY_SIZE || 50000),
     batchSize: Number(process.env.RL_BATCH_SIZE || 64),
-    episodes: Number(process.env.RL_EPISODES || 15),
+    episodes: Number(process.env.RL_EPISODES || 40),
+    // the DQN decides (and may trade) once per this many minutes — in training and in live trading
+    decisionMinutes: Number(process.env.RL_DECISION_MINUTES || 60),
+    // each episode is a random segment of this many decisions (500 hourly decisions ≈ 3 weeks)
+    episodeSteps: Number(process.env.RL_EPISODE_STEPS || 500),
     trainEvery: Number(process.env.RL_TRAIN_EVERY || 4),
     targetUpdateEvery: Number(process.env.RL_TARGET_UPDATE_EVERY || 200),
-    feeRate: Number(process.env.RL_FEE_RATE || 0.0005),
+    // Real cost of one swap: exchange fee + spread (share of the amount) and a fixed network fee for a typical
+    // trade size. Unknown until real swaps are made — the defaults match the "typical" backtest level.
+    feeRate: Number(process.env.RL_FEE_RATE || 0.005),
+    gasUsd: Number(process.env.RL_GAS_USD || 2),
+    tradeSizeUsd: Number(process.env.RL_TRADE_SIZE_USD || 1000),
     invalidActionPenalty: Number(process.env.RL_INVALID_ACTION_PENALTY || 0.002),
     // share of every training batch taken from real production decisions (self-correction)
     liveSampleShare: Number(process.env.RL_LIVE_SAMPLE_SHARE || 0.25),

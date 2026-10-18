@@ -1,12 +1,9 @@
-import {
-  buildMarketFeatures,
-  INDICATOR_WARMUP,
-  IOHLCV,
-  STATE_FEATURE_COUNT,
-} from "../../utils/technical-indicators";
+import { INDICATOR_WARMUP, IOHLCV } from "../../utils/technical-indicators";
+import { CANDLE_FEATURE_COUNT, FORECAST_LAYOUT } from "../../utils/tensorflow.helpers";
 
-// market features + price forecast + position + unrealized PnL
-export const DQN_FEATURE_COUNT = STATE_FEATURE_COUNT + 1;
+// market features + forecast of the price path + position + unrealized PnL
+export const DQN_FEATURE_COUNT = CANDLE_FEATURE_COUNT + FORECAST_LAYOUT.count + 2;
+const EMPTY_FORECAST: number[] = new Array(FORECAST_LAYOUT.count).fill(0);
 
 export const RLAction = {
   Hold: 0,
@@ -31,32 +28,65 @@ export interface IEnvStepResult {
 export class TradingEnvironment {
   private readonly prices: number[];
   private readonly marketFeatures: number[][];
-  private readonly forecasts: number[];
+  private readonly forecasts: number[][];
   private readonly timeSteps: number;
   private readonly feeRate: number;
   private readonly invalidActionPenalty: number;
+  private readonly stepMinutes: number;
+  private readonly drift: number;
 
   private t = 0;
+  private endIndex = 0;
   private position = 0;
   private entryPrice = 0;
 
-  /** `forecasts[i]` = forecast model output (scaled horizon return) made at candle i. */
-  constructor(candles: IOHLCV[], forecasts: number[], timeSteps: number, feeRate: number, invalidActionPenalty: number) {
+  /**
+   * `features[i]` = standardized candle features at candle i,
+   * `forecasts[i]` = forecast model outputs (FORECAST_LAYOUT) made at candle i,
+   * `feeRate` = full cost of one swap as a share of the traded amount,
+   * `stepMinutes` = minutes between decisions (one step of the environment),
+   * `drift` = average market return per step that is subtracted from the reward, so only timing is rewarded.
+   */
+  constructor(
+    candles: IOHLCV[],
+    features: number[][],
+    forecasts: number[][],
+    timeSteps: number,
+    feeRate: number,
+    invalidActionPenalty: number,
+    stepMinutes = 1,
+    drift = 0
+  ) {
     this.prices = candles.map((c) => c.close);
-    this.marketFeatures = buildMarketFeatures(candles);
+    this.marketFeatures = features;
     this.forecasts = forecasts;
     this.timeSteps = timeSteps;
     this.feeRate = feeRate;
     this.invalidActionPenalty = invalidActionPenalty;
+    this.stepMinutes = stepMinutes;
+    this.drift = drift;
     this.reset();
+  }
+
+  /** Average return per step over the whole data: (last / first)^(step / minutes) − 1. */
+  public static averageStepReturn(candles: IOHLCV[], stepMinutes: number): number {
+    if (candles.length < 2 || candles[0].close <= 0) return 0;
+    const total = candles[candles.length - 1].close / candles[0].close;
+    return Math.pow(total, stepMinutes / (candles.length - 1)) - 1;
+  }
+
+  public get length(): number {
+    return this.prices.length;
   }
 
   public get startIndex(): number {
     return Math.max(INDICATOR_WARMUP, this.timeSteps);
   }
 
-  public reset(): number[][] {
-    this.t = this.startIndex;
+  /** Starts an episode at `start` that lasts `steps` decisions (default: until the end of data). */
+  public reset(start = this.startIndex, steps = Infinity): number[][] {
+    this.t = Math.max(start, this.startIndex);
+    this.endIndex = Math.min(this.prices.length - 1, this.t + steps * this.stepMinutes);
     this.position = 0;
     this.entryPrice = 0;
     return this.getState();
@@ -68,7 +98,7 @@ export class TradingEnvironment {
 
     for (let i = this.t - this.timeSteps + 1; i <= this.t; i++) {
       const row = this.marketFeatures[i];
-      window.push([...row, this.forecasts[i] ?? 0, this.position, unrealized]);
+      window.push([...row, ...(this.forecasts[i] ?? EMPTY_FORECAST), this.position, unrealized]);
     }
 
     return window;
@@ -78,7 +108,7 @@ export class TradingEnvironment {
   public stateAt(t: number, position = 0): number[][] {
     const window: number[][] = [];
     for (let i = t - this.timeSteps + 1; i <= t; i++) {
-      window.push([...this.marketFeatures[i], this.forecasts[i] ?? 0, position, 0]);
+      window.push([...this.marketFeatures[i], ...(this.forecasts[i] ?? EMPTY_FORECAST), position, 0]);
     }
     return window;
   }
@@ -106,13 +136,14 @@ export class TradingEnvironment {
       }
     }
 
-    const nextPrice = this.prices[this.t + 1];
-    const marketReturn = (nextPrice - price) / price;
-    const holdingReturn = this.position * marketReturn;
+    // the position is held until the next decision
+    const next = Math.min(this.t + this.stepMinutes, this.prices.length - 1);
+    const marketReturn = (this.prices[next] - price) / price;
+    const holdingReturn = this.position * (marketReturn - this.drift);
     const reward = holdingReturn - this.feeRate * traded - penalty;
 
-    this.t += 1;
-    const done = this.t >= this.prices.length - 1;
+    this.t = next;
+    const done = this.t + this.stepMinutes > this.endIndex;
 
     return {
       state: done ? this.getTerminalState() : this.getState(),
@@ -136,12 +167,12 @@ export class TradingEnvironment {
 /** Same layout as TradingEnvironment.getState(); `forecasts` is aligned with `candles`. */
 export const buildInferenceState = (
   candles: IOHLCV[],
-  forecasts: number[],
+  features: number[][],
+  forecasts: number[][],
   timeSteps: number,
   position: number,
   entryPrice: number
 ): number[][] => {
-  const features = buildMarketFeatures(candles);
   const last = candles.length - 1;
   const price = candles[last].close;
   const unrealized = position === 1 && entryPrice > 0 ? (price - entryPrice) / entryPrice : 0;
@@ -149,7 +180,7 @@ export const buildInferenceState = (
   const start = Math.max(0, last - timeSteps + 1);
 
   for (let i = start; i <= last; i++) {
-    window.push([...features[i], forecasts[i] ?? 0, position, unrealized]);
+    window.push([...features[i], ...(forecasts[i] ?? EMPTY_FORECAST), position, unrealized]);
   }
 
   while (window.length < timeSteps) {
