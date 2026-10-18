@@ -17,7 +17,9 @@ import { IMarketDataset } from "../types/marketData.types";
 const MIN_SWAP_USD = 15;
 
 class StatisticAndPredictionService {
-  private isAbleToTrade: boolean = true;
+  // models are retrained on copies and swapped in when ready, so trading never pauses; this only
+  // prevents a second retraining from starting while the previous one is still running
+  private isRetraining = false;
   // timers for updating trading history dataset
   private historyMinutePairTimer: NodeJS.Timeout | null = null;
 
@@ -31,7 +33,6 @@ class StatisticAndPredictionService {
 
   // when the DQN last made a trading decision, per pair: trades happen at most once per rl.decisionMinutes
   private lastDecisionAt: Map<CryptoPairs, number> = new Map();
-
 
   constructor() {
     this.autoRetrainModels();
@@ -86,21 +87,27 @@ class StatisticAndPredictionService {
 
     this.retrainingMinuteModelTimer = repeatEvent({
       callback: async () => {
-        this.isAbleToTrade = false;
-
-        for (const pair of Object.values(CryptoPairs)) {
-          const dataset = await MarketDataService.getTrainingDataset(pair);
-          // saved predictions are compared with real prices so the models correct themselves
-          const predictionHistory = await DigitalOceanStorageService.getTensorflowPredictionHistory(pair);
-          log(
-            `[**] Retraining models: ${dataset.minute.length} minute / ${dataset.hour.length} hour candles, ` +
-              `${dataset.futures.length} futures rows, ${predictionHistory.length} saved predictions`,
-            Colors.GREEN
-          );
-          await TensorflowService.trainModel(pair, dataset, predictionHistory);
+        if (this.isRetraining) {
+          log(`[**] Previous retraining is still running, skipping this one`, Colors.YELLOW);
+          return;
         }
+        this.isRetraining = true;
 
-        this.isAbleToTrade = true;
+        try {
+          for (const pair of Object.values(CryptoPairs)) {
+            const dataset = await MarketDataService.getTrainingDataset(pair);
+            // saved predictions are compared with real prices so the models correct themselves
+            const predictionHistory = await DigitalOceanStorageService.getTensorflowPredictionHistory(pair);
+            log(
+              `[**] Retraining models: ${dataset.minute.length} minute / ${dataset.hour.length} hour candles, ` +
+                `${dataset.futures.length} futures rows, ${predictionHistory.length} saved predictions`,
+              Colors.GREEN
+            );
+            await TensorflowService.trainModel(pair, dataset, predictionHistory);
+          }
+        } finally {
+          this.isRetraining = false;
+        }
       },
       units: unitsForMinutes,
       interval: intervalForMinutes,
@@ -154,12 +161,12 @@ class StatisticAndPredictionService {
             const position = prediction.position ?? 0;
             const sinceDecision = Date.now() - (this.lastDecisionAt.get(pair) ?? 0);
 
-            if (!this.isAbleToTrade) {
-              log(`[**] Cannot trade now, because models are retraining`, Colors.RED);
-              continue;
-            } else if (sinceDecision < cryptoConfig.rl.decisionMinutes * 60 * 1000 - 30 * 1000) {
+            if (sinceDecision < cryptoConfig.rl.decisionMinutes * 60 * 1000 - 30 * 1000) {
               // predictions are saved every run for self-correction, but trades follow the DQN's training cadence
-              log(`[**] Next trading decision in ${Math.ceil((cryptoConfig.rl.decisionMinutes * 60 * 1000 - sinceDecision) / 60000)} min`, Colors.YELLOW);
+              log(
+                `[**] Next trading decision in ${Math.ceil((cryptoConfig.rl.decisionMinutes * 60 * 1000 - sinceDecision) / 60000)} min`,
+                Colors.YELLOW
+              );
               continue;
             }
 
@@ -238,12 +245,7 @@ class StatisticAndPredictionService {
           return;
         }
 
-        this.walletAmountStatistic(
-          balanceETH,
-          walletETHHistory,
-          ETHtoUSD,
-          USDtoETH
-        );
+        this.walletAmountStatistic(balanceETH, walletETHHistory, ETHtoUSD, USDtoETH);
 
         // push new value to DigitalOcean
         await DigitalOceanStorageService.pushWalletBalanceHistory(CryptoBase.ETH, {
@@ -271,7 +273,7 @@ class StatisticAndPredictionService {
 
       const diffETHusd = diffETHsinceStart * ethToUSD;
 
-      let message = Colors.GREEN + `Balance: ~$${(ETHusd).toFixed(3)} `;
+      let message = Colors.GREEN + `Balance: ~$${ETHusd.toFixed(3)} `;
 
       message += ` | ETH: ${ethBalance.toFixed(5)} ($${ETHusd.toFixed(3)}) `;
 
@@ -297,10 +299,7 @@ class StatisticAndPredictionService {
     // prices are in USDT already, no extra API calls needed
     // Calculate possible profit for Buy action
     if (action === "Buy") {
-      const amountToBuy = await CryptoExchangeService.minimalExchangeAmount(
-        CryptoBase.USDT,
-        CryptoBase.ETH
-      );
+      const amountToBuy = await CryptoExchangeService.minimalExchangeAmount(CryptoBase.USDT, CryptoBase.ETH);
 
       const potentialProfit = (predictedPrice - currentPrice) * amountToBuy;
       log(`[**] Potential profit from buying ETH: ~$${potentialProfit.toFixed(4)}`, Colors.GREEN);
@@ -308,10 +307,7 @@ class StatisticAndPredictionService {
 
     // Calculate possible profit for Sell action
     if (action === "Sell") {
-      const amountToSell = await CryptoExchangeService.minimalExchangeAmount(
-        CryptoBase.ETH,
-        CryptoBase.USDT
-      );
+      const amountToSell = await CryptoExchangeService.minimalExchangeAmount(CryptoBase.ETH, CryptoBase.USDT);
 
       const potentialProfit = (currentPrice - predictedPrice) * amountToSell;
       log(`[**] Potential profit from selling ETH: ~$${potentialProfit.toFixed(4)}`, Colors.GREEN);

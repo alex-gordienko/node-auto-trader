@@ -87,9 +87,11 @@ const cryptoConfig = {
     modelsDir: process.env.MODELS_DIR || `${__dirname}/../models`,
   },
 
-  // Real-time market microstructure recorders (run separately: `yarn collect`). Binance keeps no free history of
+  // Real-time market microstructure recorders (part of the server, or standalone: `yarn collect`). Binance keeps no free history of
   // order books / trades streams, so everything a future order-flow model trains on has to be recorded here.
   collectors: {
+    // record inside the server process (worker thread); set to false when running `yarn collect` separately
+    embedded: (process.env.COLLECTORS_EMBEDDED || "true") === "true",
     symbols: (process.env.COLLECTOR_SYMBOLS || "ETH-USDT,BTC-USDT").split(",").filter(Boolean),
     // order book: top N levels, one snapshot per interval (the stream itself updates every 100 ms)
     depthLevels: Number(process.env.COLLECTOR_DEPTH_LEVELS || 20),

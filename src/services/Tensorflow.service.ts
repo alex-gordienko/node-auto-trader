@@ -61,6 +61,12 @@ const tf: typeof tfType = cryptoConfig.useGPU ? require("@tensorflow/tfjs-node-g
  * - DQN: chooses Hold / Buy / Sell and receives the forecast as an input feature.
  * Both self-correct on retraining using saved production predictions vs. prices that actually happened.
  */
+/** A forecast model together with the metrics / scalers it was trained with. */
+interface IForecastBundle {
+  model: tfType.LayersModel;
+  metrics: IForecastMetrics;
+}
+
 /** Precomputed inputs for backtesting one pair. */
 export interface IBacktestInputs {
   pair: CryptoPairs;
@@ -290,8 +296,15 @@ class TensorflowAI {
     return this.forecastMetricsMap.get(pair)?.beatsNaive ?? false;
   }
 
-  private reliableOutputs(pair: CryptoPairs): boolean[] {
-    const outputs = this.forecastMetricsMap.get(pair)?.outputs;
+  /** The forecast model currently used for trading. */
+  private liveForecast(pair: CryptoPairs): IForecastBundle | undefined {
+    const model = this.forecastModelsMap.get(pair);
+    const metrics = this.forecastMetricsMap.get(pair);
+    return model && metrics ? { model, metrics } : undefined;
+  }
+
+  private reliableOutputs(pair: CryptoPairs, metrics = this.forecastMetricsMap.get(pair)): boolean[] {
+    const outputs = metrics?.outputs;
     return Array.from({ length: FORECAST_LAYOUT.count }, (_, j) => outputs?.[j]?.reliable ?? false);
   }
 
@@ -356,12 +369,13 @@ class TensorflowAI {
     features: number[][],
     hourly: IHourlyContext,
     futures: IFuturesContext,
-    fromIndex = 0
+    fromIndex = 0,
+    // during retraining the DQN learns from the new forecast model before it goes live
+    bundle = this.liveForecast(pair)
   ): (number[] | null)[] {
     const series: (number[] | null)[] = new Array(candles.length).fill(null);
-    const model = this.forecastModelsMap.get(pair);
-    const metrics = this.forecastMetricsMap.get(pair);
-    if (!model || !metrics) return series;
+    if (!bundle) return series;
+    const { model, metrics } = bundle;
 
     const indexes: number[] = [];
     const inputs: IForecastInput[] = [];
@@ -379,10 +393,14 @@ class TensorflowAI {
   }
 
   /** What the DQN sees: only the outputs that proved useful on held-out data, the rest are zeros. */
-  private dqnForecastFeature(pair: CryptoPairs, series: (number[] | null)[]): number[][] {
-    const reliable = this.reliableOutputs(pair);
+  private dqnForecastFeature(
+    pair: CryptoPairs,
+    series: (number[] | null)[],
+    metrics = this.forecastMetricsMap.get(pair)
+  ): number[][] {
+    const reliable = this.reliableOutputs(pair, metrics);
     // in units of each output's typical size, so the DQN sees values around ±1
-    const scale = this.forecastMetricsMap.get(pair)?.targetStd ?? [];
+    const scale = metrics?.targetStd ?? [];
     return series.map((row) => reliable.map((ok, j) => (ok && row ? row[j] / (scale[j] || 1) : 0)));
   }
 
@@ -398,7 +416,7 @@ class TensorflowAI {
     hourly: IHourlyContext,
     futures: IFuturesContext,
     feedback: ILiveFeedback
-  ): Promise<void> => {
+  ): Promise<IForecastBundle | null> => {
     const layout = FORECAST_LAYOUT;
     const { maxTrainingSamples, sampleStride, epochs, patience, batchSize } = cryptoConfig.forecast;
     const all = buildForecastSamples(
@@ -419,7 +437,7 @@ class TensorflowAI {
 
     if (n < 1000) {
       log(`[**] ${pair}: not enough contiguous minute + hourly history to train forecast (${n} samples)`, Colors.RED);
-      return;
+      return null;
     }
 
     const embargo = Math.ceil(layout.pathMinutes / sampleStride);
@@ -554,11 +572,6 @@ class TensorflowAI {
         beatsNaive: outputs[layout.mainIndex].reliable,
       };
 
-      previous?.dispose();
-      this.forecastModelsMap.set(pair, model);
-      this.forecastMetricsMap.set(pair, metrics);
-      await this.saveForecast(pair);
-
       log(
         `[**] ${pair} forecast ready after ${epochsRun} epochs (best val loss ${bestLoss.toFixed(4)}), ` +
           `direction (${this.horizon}m) on evaluation = ${(val.directionAccuracy * 100).toFixed(1)}%`,
@@ -572,9 +585,12 @@ class TensorflowAI {
           o.reliable ? Colors.GREEN : Colors.YELLOW
         )
       );
+      // goes live only together with the retrained DQN (see commitModels)
+      return { model, metrics };
     } catch (error) {
       log(`[**] ${pair}: error while training forecast model: ${error}`, Colors.RED);
       model.dispose();
+      return null;
     } finally {
       console.timeEnd(`${pair}: Forecast Training Time`);
       tf.dispose([...xTrain, yTrain, ...xCal, yCal]);
@@ -727,10 +743,11 @@ class TensorflowAI {
     candles: IOHLCV[],
     features: number[][],
     forecasts: number[][],
-    feedback: ILiveFeedback
+    feedback: ILiveFeedback,
+    // copies of the live networks: trading keeps using the live ones until training succeeds
+    model: tfType.LayersModel,
+    target: tfType.LayersModel
   ) => {
-    const model = this.modelsMap.get(pair)!;
-    const target = this.targetModelsMap.get(pair)!;
     const {
       episodes,
       episodeSteps,
@@ -828,7 +845,6 @@ class TensorflowAI {
         );
       }
 
-      await this.saveDQN(pair);
       log(`[**] ${pair} DQN training completed. Avg episode reward=${(episodeReturns / episodes).toFixed(5)}`, Colors.GREEN);
       return true;
     } catch (error) {
@@ -959,11 +975,62 @@ class TensorflowAI {
       );
     }
 
-    await this.trainForecast(pair, candles, features, hourly, futures, feedback);
-    const forecasts = this.dqnForecastFeature(pair, this.forecastSeries(pair, candles, features, hourly, futures));
+    // everything is trained on copies; the bot keeps trading with the current models meanwhile
+    const newForecast = await this.trainForecast(pair, candles, features, hourly, futures, feedback);
+    const forecast = newForecast ?? this.liveForecast(pair);
+    const forecasts = this.dqnForecastFeature(
+      pair,
+      this.forecastSeries(pair, candles, features, hourly, futures, 0, forecast),
+      forecast?.metrics
+    );
 
-    return this.trainDQN(pair, candles, features, forecasts, feedback);
+    const policy = this.createDQNmodel();
+    const target = this.createDQNmodel();
+    this.cloneWeights(this.modelsMap.get(pair)!, policy);
+    this.cloneWeights(this.targetModelsMap.get(pair)!, target);
+
+    const trained = await this.trainDQN(pair, candles, features, forecasts, feedback, policy, target);
+    if (!trained) {
+      // keep the previous, consistent pair of models
+      policy.dispose();
+      target.dispose();
+      newForecast?.model.dispose();
+      log(`[**] ${pair}: retraining failed, the current models stay in use`, Colors.RED);
+      return false;
+    }
+
+    await this.commitModels(pair, newForecast, policy, target);
+    return true;
   };
+
+  /**
+   * Switches trading to the retrained models in one step and saves them. The forecast and the DQN go live
+   * together, because the DQN was trained on this forecast's outputs.
+   */
+  private async commitModels(
+    pair: CryptoPairs,
+    forecast: IForecastBundle | null,
+    policy: tfType.LayersModel,
+    target: tfType.LayersModel
+  ): Promise<void> {
+    const old = [
+      forecast ? this.forecastModelsMap.get(pair) : undefined,
+      this.modelsMap.get(pair),
+      this.targetModelsMap.get(pair),
+    ];
+
+    if (forecast) {
+      this.forecastModelsMap.set(pair, forecast.model);
+      this.forecastMetricsMap.set(pair, forecast.metrics);
+    }
+    this.modelsMap.set(pair, policy);
+    this.targetModelsMap.set(pair, target);
+    old.forEach((model) => model?.dispose());
+    log(`[**] ${pair}: retrained models are live`, Colors.GREEN);
+
+    if (forecast) await this.saveForecast(pair);
+    await this.saveDQN(pair);
+  }
 
   public async predictNextPrices(
     datasets: Map<CryptoPairs, IMarketDataset>,
