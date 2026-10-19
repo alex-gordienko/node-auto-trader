@@ -26,7 +26,9 @@ export abstract class BinanceStreamCollector {
 
   constructor(
     public readonly name: string, // e.g. "ETH-USDT/futures-trades"
-    private readonly url: string
+    private readonly url: string,
+    // how long the stream may stay silent before the connection is considered dead
+    private readonly silenceTimeoutMs = cryptoConfig.collectors.silenceTimeoutSeconds * 1000
   ) {
     this.dir = path.join(cryptoConfig.collectors.storageDir, name);
     fs.mkdirSync(this.dir, { recursive: true });
@@ -47,13 +49,31 @@ export abstract class BinanceStreamCollector {
   public start(): void {
     this.journal({ type: "start", at: Date.now() });
     this.connect();
-    const silenceMs = cryptoConfig.collectors.silenceTimeoutSeconds * 1000;
     this.watchdog = setInterval(() => {
-      if (this.ws && this.lastMessageAt && Date.now() - this.lastMessageAt > silenceMs) {
-        log(`[collector] ${this.name}: no data for ${silenceMs / 1000}s, reconnecting`, Colors.YELLOW);
-        this.ws.close();
+      if (this.ws && this.lastMessageAt && Date.now() - this.lastMessageAt > this.silenceTimeoutMs) {
+        log(`[collector] ${this.name}: no data for ${this.silenceTimeoutMs / 1000}s, reconnecting`, Colors.YELLOW);
+        this.reconnectNow();
       }
     }, 10_000);
+  }
+
+  /**
+   * Abandons the current socket and opens a new one right away. A dead connection (network drop, sleep)
+   * may never finish the close handshake, so waiting for its close event used to delay reconnects 20–30 min.
+   */
+  private reconnectNow(): void {
+    const dead = this.ws;
+    this.ws = null; // its close event, if it ever comes, is ignored
+    this.disconnectedAt ??= this.lastMessageAt || Date.now();
+    // the new socket gets a full silence window before it is judged too
+    this.lastMessageAt = Date.now();
+    this.reconnects++;
+    try {
+      dead?.close();
+    } catch {
+      // already broken
+    }
+    this.connect();
   }
 
   private connect(): void {

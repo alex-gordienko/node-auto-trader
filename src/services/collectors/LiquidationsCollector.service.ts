@@ -10,7 +10,8 @@ import { BinanceStreamCollector } from "./BinanceStreamCollector";
  */
 export class LiquidationsCollector extends BinanceStreamCollector {
   constructor() {
-    super("ALL/futures-liquidations", `${cryptoConfig.collectors.futuresMarketStreamUrl}/!forceOrder@arr`);
+    // liquidations can legitimately pause for minutes in a calm market: only a long silence means a dead stream
+    super("ALL/futures-liquidations", `${cryptoConfig.collectors.futuresMarketStreamUrl}/!forceOrder@arr`, 15 * 60 * 1000);
   }
 
   protected handle(message: any, receivedAt: number): void {

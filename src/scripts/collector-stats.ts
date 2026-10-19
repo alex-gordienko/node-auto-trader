@@ -18,8 +18,16 @@ const iso = (ms: number) => new Date(ms).toISOString().replace("T", " ").slice(0
     return;
   }
 
-  for (const symbol of fs.readdirSync(root).sort()) {
-    for (const stream of fs.readdirSync(path.join(root, symbol)).sort()) {
+  // only folders: macOS Finder drops .DS_Store files next to them
+  const folders = (dir: string) =>
+    fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+
+  for (const symbol of folders(root)) {
+    for (const stream of folders(path.join(root, symbol))) {
       const name = `${symbol}/${stream}`;
       const files = listStreamFiles(name);
       const bytes = files.reduce((acc, f) => acc + fs.statSync(f).size, 0);

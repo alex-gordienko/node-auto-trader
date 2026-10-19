@@ -3,8 +3,9 @@ import path from "path";
 import zlib from "zlib";
 
 /**
- * Appends JSON rows to gzip files rotated every hour: <dir>/<yyyy-MM-dd>/<HH>.jsonl.gz (UTC, by receive time).
- * A restart within the same hour appends a new gzip member to the same file — gunzip reads them as one stream.
+ * Writes JSON rows to gzip files rotated every hour: <dir>/<yyyy-MM-dd>/<HH>.jsonl.gz (UTC, by receive time).
+ * After a restart within the same hour a new file <HH>-<timestamp>.jsonl.gz is started instead of appending:
+ * a process killed mid-write leaves an unfinished archive, and data appended after it would be hard to read.
  * Data is flushed to disk regularly, so a crash loses at most a few seconds.
  */
 export class RollingGzipWriter {
@@ -28,7 +29,9 @@ export class RollingGzipWriter {
     if (this.current?.key !== key) {
       this.endCurrent();
       fs.mkdirSync(path.join(this.dir, day), { recursive: true });
-      const file = fs.createWriteStream(path.join(this.dir, day, `${hour}.jsonl.gz`), { flags: "a" });
+      const plain = path.join(this.dir, day, `${hour}.jsonl.gz`);
+      const target = fs.existsSync(plain) ? path.join(this.dir, day, `${hour}-${receivedAt}.jsonl.gz`) : plain;
+      const file = fs.createWriteStream(target, { flags: "wx" });
       const gzip = zlib.createGzip();
       gzip.pipe(file);
       this.current = { key, gzip, file };

@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import readline from "readline";
 import zlib from "zlib";
 
 import cryptoConfig from "../../config/crypto.config";
@@ -16,7 +15,13 @@ export const listStreamFiles = (stream: string, fromMs = 0, toMs = Infinity): st
   if (!fs.existsSync(root)) return [];
   const files: string[] = [];
   for (const day of fs.readdirSync(root).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort()) {
-    for (const file of fs.readdirSync(path.join(root, day)).filter((f) => f.endsWith(".jsonl.gz")).sort()) {
+    // "13.jsonl.gz" then "13-<restartTimeMs>.jsonl.gz" in order of the restarts
+    const order = (f: string) => [Number(f.slice(0, 2)), Number(f.match(/^\d{2}-(\d+)/)?.[1] ?? 0)];
+    const hourFiles = fs
+      .readdirSync(path.join(root, day))
+      .filter((f) => f.endsWith(".jsonl.gz"))
+      .sort((a, b) => order(a)[0] - order(b)[0] || order(a)[1] - order(b)[1]);
+    for (const file of hourFiles) {
       const start = Date.parse(`${day}T${file.slice(0, 2)}:00:00Z`);
       if (start + 3600_000 > fromMs && start < toMs) files.push(path.join(root, day, file));
     }
@@ -24,23 +29,46 @@ export const listStreamFiles = (stream: string, fromMs = 0, toMs = Infinity): st
   return files;
 };
 
+// header of every gzip part Node writes: magic, deflate, no flags, mtime 0, xfl 0, os
+const GZIP_HEADER = Buffer.from("1f8b08000000000000", "hex");
+
+/**
+ * Text of one hour file. A file can hold several gzip parts (older recorder versions appended after
+ * a restart), and a part cut by a killed process has no proper end. Each part is decompressed on its
+ * own and read as far as it goes, so a broken part never hides the data after it.
+ */
+const readHourFile = (file: string): string => {
+  const data = fs.readFileSync(file);
+  const starts: number[] = [];
+  for (let i = data.indexOf(GZIP_HEADER); i >= 0; i = data.indexOf(GZIP_HEADER, i + 1)) starts.push(i);
+
+  return starts
+    .map((start, k) => {
+      try {
+        return zlib
+          .gunzipSync(data.subarray(start, starts[k + 1] ?? data.length), { finishFlush: zlib.constants.Z_SYNC_FLUSH })
+          .toString("utf-8");
+      } catch {
+        return "";
+      }
+    })
+    .join("\n");
+};
+
 /**
  * Rows of a recorded stream. Files are routed by receive time and rows are stored by event time,
- * so rows are filtered by their first field (a timestamp in ms). A file still being written or cut by a
- * crash ends with an incomplete gzip block — it is read up to that point instead of failing.
+ * so rows are filtered by their first field (a timestamp in ms). Unfinished lines at the end of an
+ * interrupted part are skipped.
  */
 export async function* readStream<T extends unknown[]>(stream: string, fromMs = 0, toMs = Infinity): AsyncGenerator<T> {
   for (const file of listStreamFiles(stream, fromMs - 3600_000, toMs + 3600_000)) {
-    const gunzip = zlib.createGunzip({ finishFlush: zlib.constants.Z_SYNC_FLUSH });
-    gunzip.on("error", () => gunzip.end());
-    const lines = readline.createInterface({ input: fs.createReadStream(file).pipe(gunzip), crlfDelay: Infinity });
-    for await (const line of lines) {
+    for (const line of readHourFile(file).split("\n")) {
       if (!line) continue;
       let row: T;
       try {
         row = JSON.parse(line);
       } catch {
-        continue; // last line of an interrupted file
+        continue; // last line of an interrupted part
       }
       const time = row[0] as number;
       if (time >= fromMs && time < toMs) yield row;

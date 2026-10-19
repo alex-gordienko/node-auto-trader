@@ -1,6 +1,10 @@
 {
-	"watch": ["./index.ts", "src"],
+	"watch": [
+		"./index.ts",
+		"src"
+	],
 	"ext": ".ts,.js",
 	"ignore": [],
-	"exec": "npx ts-node ./index.ts"
+	"exec": "node --require ts-node/register ./index.ts",
+	"signal": "SIGTERM"
 }
