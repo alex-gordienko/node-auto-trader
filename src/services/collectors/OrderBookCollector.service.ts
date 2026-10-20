@@ -19,7 +19,7 @@ export class OrderBookCollector extends BinanceStreamCollector {
   constructor(symbol: MarketSymbol, market: "spot" | "futures") {
     const { spotStreamUrl, futuresPublicStreamUrl } = cryptoConfig.collectors;
     const stream = `${symbol.replace("-", "").toLowerCase()}@depth20@100ms`;
-    super(`${symbol}/${market}-depth`, `${market === "spot" ? spotStreamUrl : futuresPublicStreamUrl}/${stream}`);
+    super("orderbook", `${symbol}/${market}-depth`, `${market === "spot" ? spotStreamUrl : futuresPublicStreamUrl}/${stream}`);
   }
 
   protected handle(message: any, receivedAt: number): void {

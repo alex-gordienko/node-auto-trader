@@ -16,7 +16,29 @@ import { CryptoBase, CryptoPairs } from "../types/basic.types";
 import EtheriumWalletService from "./EtheriumWallet.service";
 
 // "1m" / "1h" candles keep the folder names of the first Binance datasets
-export type MarketSeries = "1m" | "1h" | "futures-metrics" | "funding";
+export type MarketSeries =
+  | "1m"
+  | "1h"
+  | "futures-metrics"
+  | "funding"
+  | "premium-1m"
+  | "premium-1h"
+  | "dvol-1h"
+  | "stablecoins-1d"
+  | "fear-greed-1d";
+
+// datasets/<source>/<symbol>/<series>/<yyyy-MM>.json
+const SERIES_SOURCE: Record<MarketSeries, string> = {
+  "1m": "binance",
+  "1h": "binance",
+  "futures-metrics": "binance",
+  funding: "binance",
+  "premium-1m": "binance",
+  "premium-1h": "binance",
+  "dvol-1h": "deribit",
+  "stablecoins-1d": "defillama",
+  "fear-greed-1d": "alternative-me",
+};
 const CANDLE_SERIES: Record<CandleTimeframe, MarketSeries> = { minute: "1m", hour: "1h" };
 
 interface ITransactionHistoryETHProps {
@@ -82,7 +104,8 @@ class LocalStorageService {
 
   // ---------- Binance market data: one file per month per series ----------
 
-  private seriesDir = (symbol: MarketSymbol, series: MarketSeries) => path.join("datasets", "binance", symbol, series);
+  private seriesDir = (symbol: MarketSymbol, series: MarketSeries) =>
+    path.join("datasets", SERIES_SOURCE[series], symbol, series);
 
   private monthKey = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString().slice(0, 7);
 

@@ -1,24 +1,34 @@
 import cryptoConfig from "../config/crypto.config";
 import { ITensorflowPrediction } from "../types/cryptoExchange.types";
-import { IFundingRate, IFuturesMetrics, IMarketCandle } from "../types/marketData.types";
+import { IFundingRate, IFuturesMetrics, IMarketCandle, ISeriesPoint } from "../types/marketData.types";
 import {
   buildCandleFeatures,
   INDICATOR_WARMUP,
   IOHLCV,
+  IPremiumPoint,
   MARKET_FEATURE_COUNT,
+  PREMIUM_FEATURE_COUNT,
   REFERENCE_FEATURE_COUNT,
+  sma,
 } from "./technical-indicators";
 
 // returns are forecast as log-returns in percent, so the loss is not vanishingly small
 export const FORECAST_TARGET_SCALE = 100;
 // per candle: market + order flow features, then features against each reference market (BTC, ...)
-export const CANDLE_FEATURE_COUNT = MARKET_FEATURE_COUNT + REFERENCE_FEATURE_COUNT * cryptoConfig.marketData.referencePairs.length;
+export const CANDLE_FEATURE_COUNT =
+  MARKET_FEATURE_COUNT + REFERENCE_FEATURE_COUNT * cryptoConfig.marketData.referencePairs.length + PREMIUM_FEATURE_COUNT;
 // time features: hour-of-day and day-of-week as sin/cos pairs
 export const TIME_FEATURE_COUNT = 4;
 // futures: availability flag, open interest change 1h / 24h, three long/short ratios, taker buy/sell ratio, funding
 export const FUTURES_FEATURE_COUNT = 8;
 // one vector per sample describing "now": time + futures market state
-export const CONTEXT_FEATURE_COUNT = TIME_FEATURE_COUNT + FUTURES_FEATURE_COUNT;
+// DVOL level and 24h change, stablecoin supply 7d / 30d change, fear & greed level and 7d change
+export const EXTERNAL_FEATURE_COUNT = 6;
+// weekend, US session, volatility regime, 7d / 30d trend, distance to a round price, to 24h / 7d high and low
+export const REGIME_FEATURE_COUNT = 10;
+export const CONTEXT_FEATURE_COUNT = TIME_FEATURE_COUNT + FUTURES_FEATURE_COUNT + EXTERNAL_FEATURE_COUNT + REGIME_FEATURE_COUNT;
+// daily indexes are published with a delay: a value stamped D is used only from D + 2 days
+const DAILY_AVAILABILITY_DELAY_SECONDS = 2 * 86400;
 // futures rows older than this are treated as missing (data comes every 5 minutes)
 const MAX_FUTURES_LAG_SECONDS = 30 * 60;
 // A futures row stamped T describes the period [T, T+5m): taker ratio and long/short ratios correlate with the
@@ -65,7 +75,7 @@ export const forecastLayout = (horizons: number[], mainHorizon: number): IForeca
 export const FORECAST_LAYOUT = forecastLayout(cryptoConfig.forecast.horizons, cryptoConfig.forecast.horizonMinutes);
 
 // bump when the meaning of saved forecast models changes, so old ones are retrained instead of misused
-export const FORECAST_MODEL_VERSION = 3;
+export const FORECAST_MODEL_VERSION = 4;
 
 export interface IForecastOutputMetrics {
   name: string;
@@ -132,6 +142,34 @@ export interface ILiveFeedback {
 export interface IHourlyContext {
   times: number[];
   features: number[][];
+  candles: IOHLCV[];
+  // rolling statistics per hourly candle (inclusive), for the market regime features
+  stats: {
+    sma168: number[];
+    sma720: number[];
+    std24: number[];
+    std168: number[];
+    max24: number[];
+    min24: number[];
+    max168: number[];
+    min168: number[];
+  };
+}
+
+/** DVOL, stablecoin supply and fear & greed as sorted arrays for "last value before t" lookups. */
+export interface IExternalContext {
+  dvolTimes: number[];
+  dvol: number[];
+  stablecoinTimes: number[];
+  stablecoins: number[];
+  fearGreedTimes: number[];
+  fearGreed: number[];
+}
+
+/** Everything describing "now" besides candles: futures market state and external indexes. */
+export interface IMarketContext {
+  futures: IFuturesContext;
+  external: IExternalContext;
 }
 
 /** Futures metrics and funding as parallel arrays for fast "last value before time t" lookups. */
@@ -209,10 +247,118 @@ export const timeFeatures = (unixSeconds: number): number[] => {
   return [Math.sin(dayPhase), Math.cos(dayPhase), Math.sin(weekPhase), Math.cos(weekPhase)];
 };
 
-export const buildHourlyContext = (hourly: IOHLCV[], references: IOHLCV[][]): IHourlyContext => ({
-  times: hourly.map((c) => c.time),
-  features: buildCandleFeatures(hourly, references, 3600),
-});
+const rolling = (values: number[], window: number, reduce: (slice: number[]) => number): number[] =>
+  values.map((_, i) => reduce(values.slice(Math.max(0, i - window + 1), i + 1)));
+
+const stdOf = (slice: number[]) => {
+  const m = slice.reduce((a, b) => a + b, 0) / Math.max(slice.length, 1);
+  return Math.sqrt(slice.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(slice.length - 1, 1));
+};
+
+export const buildHourlyContext = (hourly: IOHLCV[], references: IOHLCV[][], premium: IPremiumPoint[] = []): IHourlyContext => {
+  const closes = hourly.map((c) => c.close);
+  const returns = closes.map((c, i) => (i > 0 && closes[i - 1] > 0 ? Math.log(c / closes[i - 1]) : 0));
+  return {
+    times: hourly.map((c) => c.time),
+    features: buildCandleFeatures(hourly, references, 3600, premium),
+    candles: hourly,
+    stats: {
+      sma168: sma(closes, 168),
+      sma720: sma(closes, 720),
+      std24: rolling(returns, 24, stdOf),
+      std168: rolling(returns, 168, stdOf),
+      max24: rolling(hourly.map((c) => c.high), 24, (s) => Math.max(...s)),
+      min24: rolling(hourly.map((c) => c.low), 24, (s) => Math.min(...s)),
+      max168: rolling(hourly.map((c) => c.high), 168, (s) => Math.max(...s)),
+      min168: rolling(hourly.map((c) => c.low), 168, (s) => Math.min(...s)),
+    },
+  };
+};
+
+export const buildExternalContext = (dvol: ISeriesPoint[], stablecoins: ISeriesPoint[], fearGreed: ISeriesPoint[]): IExternalContext => {
+  const sorted = (points: ISeriesPoint[]) => [...points].sort((a, b) => a.time - b.time);
+  const d = sorted(dvol);
+  const st = sorted(stablecoins);
+  const fg = sorted(fearGreed);
+  return {
+    dvolTimes: d.map((p) => p.time),
+    dvol: d.map((p) => p.value),
+    stablecoinTimes: st.map((p) => p.time),
+    stablecoins: st.map((p) => p.value),
+    fearGreedTimes: fg.map((p) => p.time),
+    fearGreed: fg.map((p) => p.value),
+  };
+};
+
+/** Value of a sorted series known at `knownAt`, and its value `lagSeconds` earlier; null if missing or stale. */
+const valueWithLag = (times: number[], values: number[], knownAt: number, lagSeconds: number, maxAgeSeconds: number) => {
+  const i = lastIndexAtOrBefore(times, knownAt);
+  if (i < 0 || knownAt - times[i] > maxAgeSeconds) return null;
+  const j = lastIndexAtOrBefore(times, times[i] - lagSeconds);
+  const previous = j >= 0 && times[i] - lagSeconds - times[j] <= maxAgeSeconds ? values[j] : null;
+  return { value: values[i], previous };
+};
+
+const safeLogRatio = (a: number, b: number | null) => (b && a > 0 && b > 0 ? Math.log(a / b) : 0);
+
+/**
+ * External market state known at `time`: DVOL (hourly, a point stamped T is final after T + 1h),
+ * stablecoin supply and fear & greed (daily, used only from D + 2 days). Zeros for missing data and
+ * for feature groups switched off in config.features.
+ */
+export const externalFeaturesAt = (ctx: IExternalContext, time: number): number[] => {
+  const features = cryptoConfig.features;
+  const result = new Array(EXTERNAL_FEATURE_COUNT).fill(0);
+
+  const dvol = features.dvol ? valueWithLag(ctx.dvolTimes, ctx.dvol, time - 3600, 86400, 3 * 3600) : null;
+  if (dvol) {
+    result[0] = dvol.value / 100;
+    result[1] = safeLogRatio(dvol.value, dvol.previous);
+  }
+
+  const dailyKnownAt = time - DAILY_AVAILABILITY_DELAY_SECONDS;
+  const stable7 = features.stablecoins ? valueWithLag(ctx.stablecoinTimes, ctx.stablecoins, dailyKnownAt, 7 * 86400, 3 * 86400) : null;
+  const stable30 = features.stablecoins ? valueWithLag(ctx.stablecoinTimes, ctx.stablecoins, dailyKnownAt, 30 * 86400, 3 * 86400) : null;
+  if (stable7) result[2] = safeLogRatio(stable7.value, stable7.previous) * 100;
+  if (stable30) result[3] = safeLogRatio(stable30.value, stable30.previous) * 100;
+
+  const fearGreed = features.fearGreed ? valueWithLag(ctx.fearGreedTimes, ctx.fearGreed, dailyKnownAt, 7 * 86400, 3 * 86400) : null;
+  if (fearGreed) {
+    result[4] = fearGreed.value / 100 - 0.5;
+    result[5] = fearGreed.previous !== null ? (fearGreed.value - fearGreed.previous) / 100 : 0;
+  }
+  return result;
+};
+
+/**
+ * Market regime at `closeTime` for the current `price`: calendar (weekend, US session), volatility of the last
+ * day vs. the last week, trend vs. 7- and 30-day averages, distance to the nearest round price (×100) and to
+ * the 24h / 7d high and low. Uses only hourly candles that have closed.
+ */
+export const regimeFeaturesAt = (hourly: IHourlyContext, closeTime: number, price: number): number[] => {
+  const result = new Array(REGIME_FEATURE_COUNT).fill(0);
+  if (!cryptoConfig.features.regime || !(price > 0)) return result;
+
+  const date = new Date(closeTime * 1000);
+  const minutes = date.getUTCHours() * 60 + date.getUTCMinutes();
+  result[0] = date.getUTCDay() === 0 || date.getUTCDay() === 6 ? 1 : 0;
+  // US stock market hours (13:30–20:00 UTC, without daylight-saving shifts)
+  result[1] = minutes >= 13 * 60 + 30 && minutes < 20 * 60 ? 1 : 0;
+  const round = Math.round(price / 100) * 100;
+  result[5] = ((price - round) / price) * 100;
+
+  const i = lastIndexAtOrBefore(hourly.times, closeTime - 3600);
+  if (i < 0 || closeTime - 3600 - hourly.times[i] > MAX_HOURLY_LAG_SECONDS) return result;
+  const s = hourly.stats;
+  result[2] = s.std168[i] > 0 && s.std24[i] > 0 ? Math.log(s.std24[i] / s.std168[i]) : 0;
+  result[3] = safeLogRatio(price, s.sma168[i]);
+  result[4] = safeLogRatio(price, s.sma720[i]);
+  result[6] = safeLogRatio(price, s.max24[i]);
+  result[7] = safeLogRatio(price, s.min24[i]);
+  result[8] = safeLogRatio(price, s.max168[i]);
+  result[9] = safeLogRatio(price, s.min168[i]);
+  return result;
+};
 
 export const buildFuturesContext = (metrics: IFuturesMetrics[], funding: IFundingRate[]): IFuturesContext => {
   const sortedMetrics = [...metrics].sort((a, b) => a.time - b.time);
@@ -277,7 +423,7 @@ export const forecastInputAt = (
   candles: IOHLCV[],
   features: number[][],
   hourly: IHourlyContext,
-  futures: IFuturesContext,
+  context: IMarketContext,
   windowSize: number,
   hourWindowSize: number
 ): IForecastInput | null => {
@@ -288,7 +434,12 @@ export const forecastInputAt = (
   return {
     minute: featureWindow(features, t, windowSize),
     hour,
-    context: [...timeFeatures(closeTime), ...futuresFeaturesAt(futures, closeTime)],
+    context: [
+      ...timeFeatures(closeTime),
+      ...futuresFeaturesAt(context.futures, closeTime),
+      ...externalFeaturesAt(context.external, closeTime),
+      ...regimeFeaturesAt(hourly, closeTime, candles[t].close),
+    ],
   };
 };
 
@@ -330,7 +481,7 @@ export const buildForecastSamples = (
   candles: IOHLCV[],
   features: number[][],
   hourly: IHourlyContext,
-  futures: IFuturesContext,
+  context: IMarketContext,
   windowSize: number,
   hourWindowSize: number,
   layout: IForecastLayout,
@@ -344,7 +495,7 @@ export const buildForecastSamples = (
 
   for (let t = 0; t + layout.pathMinutes < candles.length; t += stride) {
     if (hasGap(t - INDICATOR_WARMUP, t + layout.pathMinutes)) continue;
-    const input = forecastInputAt(t, candles, features, hourly, futures, windowSize, hourWindowSize);
+    const input = forecastInputAt(t, candles, features, hourly, context, windowSize, hourWindowSize);
     if (!input) continue;
     indexes.push(t);
     inputs.push(input);

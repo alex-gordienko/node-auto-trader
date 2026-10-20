@@ -6,7 +6,7 @@
  * otherwise only the tail since the last stored row is requested.
  */
 import cryptoConfig from "../config/crypto.config";
-import MarketDataService from "../services/MarketData.service";
+import MarketDataService from "../services/collectors/MarketData.service";
 import { CryptoPairs } from "../types/basic.types";
 
 const minuteDays = Number(process.argv[2] || cryptoConfig.marketData.backfillMinuteDays);

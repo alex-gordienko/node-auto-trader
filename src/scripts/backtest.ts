@@ -11,7 +11,7 @@
 import fse from "fs-extra";
 
 import cryptoConfig from "../config/crypto.config";
-import MarketDataService from "../services/MarketData.service";
+import MarketDataService from "../services/collectors/MarketData.service";
 import TensorflowService from "../services/Tensorflow.service";
 import { CryptoPairs } from "../types/basic.types";
 import { IMarketDataset } from "../types/marketData.types";
@@ -80,6 +80,10 @@ const cut = (d: IMarketDataset, until: number, from = 0): IMarketDataset => {
     references: d.references.map((r) => ({ minute: keep(r.minute), hour: keep(r.hour) })),
     futures: keep(d.futures),
     funding: keep(d.funding),
+    premium: { minute: keep(d.premium.minute), hour: keep(d.premium.hour) },
+    dvol: keep(d.dvol),
+    stablecoins: keep(d.stablecoins),
+    fearGreed: keep(d.fearGreed),
   };
 };
 

@@ -49,6 +49,19 @@ const cryptoConfig = {
 
   environment: process.env.ENVIRONMENT || "development",
 
+  // Feature groups the models see. Data is collected either way; a disabled group is fed as zeros, so the
+  // model layout stays the same and the contribution of each group can be measured (`yarn features:report`).
+  features: {
+    // reference markets after the first one (BTC-USDT is always used)
+    extraReferences: (process.env.FEATURE_EXTRA_REFERENCES || "true") === "true",
+    premiumIndex: (process.env.FEATURE_PREMIUM_INDEX || "true") === "true",
+    dvol: (process.env.FEATURE_DVOL || "true") === "true",
+    stablecoins: (process.env.FEATURE_STABLECOINS || "true") === "true",
+    fearGreed: (process.env.FEATURE_FEAR_GREED || "true") === "true",
+    // time of week, trading session, volatility / trend regime, distance to round prices and recent highs / lows
+    regime: (process.env.FEATURE_REGIME || "true") === "true",
+  },
+
   forecast: {
     // main horizon: shown as predicted_value and used to judge DQN decisions
     horizonMinutes: Number(process.env.FORECAST_HORIZON_MINUTES || 15),
@@ -113,8 +126,9 @@ const cryptoConfig = {
     binanceApiUrls: (process.env.BINANCE_API_URLS || "https://data-api.binance.vision,https://api.binance.com").split(","),
     binanceFuturesApiUrl: process.env.BINANCE_FUTURES_API_URL || "https://fapi.binance.com",
     binanceArchiveUrl: process.env.BINANCE_ARCHIVE_URL || "https://data.binance.vision",
-    // markets the traded pair is compared with (ETH usually follows BTC)
-    referencePairs: (process.env.REFERENCE_PAIRS || "BTC-USDT").split(",").filter(Boolean),
+    // markets the traded pair is compared with: BTC leads the market, ETH-BTC shows ETH's own strength,
+    // large altcoins show where money rotates
+    referencePairs: (process.env.REFERENCE_PAIRS || "BTC-USDT,ETH-BTC,SOL-USDT,BNB-USDT,XRP-USDT").split(",").filter(Boolean),
     // futures open interest, long/short ratios and funding as extra inputs
     useFutures: (process.env.USE_FUTURES_DATA || "true") === "true",
     // initial history loaded from Binance archives when the dataset is empty
@@ -122,6 +136,10 @@ const cryptoConfig = {
     backfillHourDays: Number(process.env.BINANCE_BACKFILL_HOUR_DAYS || 365),
     // minute history loaded for each retraining (DQN episodes are random segments of it)
     trainingMinuteDays: Number(process.env.TRAINING_MINUTE_DAYS || 90),
+    // other free sources with history
+    deribitApiUrl: process.env.DERIBIT_API_URL || "https://www.deribit.com/api/v2",
+    stablecoinsUrl: process.env.STABLECOINS_URL || "https://stablecoins.llama.fi/stablecoincharts/all",
+    fearGreedUrl: process.env.FEAR_GREED_URL || "https://api.alternative.me/fng/",
     // candles kept in memory for inference (indicators need warmup + window)
     inferenceCandles: Number(process.env.INFERENCE_CANDLES || 300),
     priceCacheTtlSeconds: Number(process.env.PRICE_CACHE_TTL || 120),

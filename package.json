@@ -16,7 +16,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "backfill:binance": "ts-node --transpile-only src/scripts/binance-backfill.ts",
     "backtest": "MODELS_DIR=\"$PWD/src/Storage/backtest/models\" NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/backtest.ts",
-    "collect:stats": "ts-node --transpile-only src/scripts/collector-stats.ts"
+    "collect:stats": "ts-node --transpile-only src/scripts/collector-stats.ts",
+    "features:report": "MODELS_DIR=\"$PWD/src/Storage/features-report/models\" NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/features-report.ts"
   },
   "dependencies": {
     "@tensorflow/tfjs": "4.22.0",

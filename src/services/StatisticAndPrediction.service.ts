@@ -1,4 +1,4 @@
-import MarketDataService from "./MarketData.service";
+import MarketDataService from "./collectors/MarketData.service";
 import CryptoExchangeService from "./CryptoExchange.service";
 // import DigitalOceanStorageService from "./DigitalOcean.storage.service";
 import DigitalOceanStorageService from "./Local.storage.service";

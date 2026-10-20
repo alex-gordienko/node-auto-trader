@@ -41,10 +41,37 @@ export interface ICandleSeries {
   hour: IMarketCandle[];
 }
 
+/**
+ * Binance futures premium index candle: (perpetual price − spot index) / spot index.
+ * Positive = futures traders pay above spot (crowded longs), negative = the opposite.
+ */
+export interface IPremiumCandle {
+  time: number; // candle open, unix seconds
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+export interface IPremiumSeries {
+  minute: IPremiumCandle[];
+  hour: IPremiumCandle[];
+}
+
+/** One value of a slow series: DVOL (hourly), stablecoin supply and fear & greed (daily). */
+export interface ISeriesPoint {
+  time: number; // start of the period, unix seconds
+  value: number;
+}
+
 /** Everything the models need for one traded pair. */
 export interface IMarketDataset extends ICandleSeries {
   // reference markets (e.g. BTC-USDT) in the order of config marketData.referencePairs
   references: ICandleSeries[];
   futures: IFuturesMetrics[];
   funding: IFundingRate[];
+  premium: IPremiumSeries;
+  dvol: ISeriesPoint[]; // ETH implied volatility index (Deribit), hourly close
+  stablecoins: ISeriesPoint[]; // total USD stablecoin supply (DefiLlama), daily
+  fearGreed: ISeriesPoint[]; // crypto fear & greed index 0–100 (alternative.me), daily
 }

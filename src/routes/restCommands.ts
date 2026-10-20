@@ -3,7 +3,7 @@ import { format } from "date-fns";
 import routes from "../config/routes.config";
 
 import TensorflowService from "../services/Tensorflow.service";
-import MarketDataService from "../services/MarketData.service";
+import MarketDataService from "../services/collectors/MarketData.service";
 // import DigitalOceanStorageService from "../services/DigitalOcean.storage.service";
 import DigitalOceanStorageService from "../services/Local.storage.service";
 import { CryptoPairs } from "../types/basic.types";

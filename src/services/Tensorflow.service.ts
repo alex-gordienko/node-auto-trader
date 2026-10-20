@@ -20,7 +20,8 @@ import {
   CONTEXT_FEATURE_COUNT,
   fitColumnScaler,
   IColumnScaler,
-  IFuturesContext,
+  IMarketContext,
+  buildExternalContext,
   computeOutputErrors,
   correlationT,
   fitCalibration,
@@ -379,7 +380,7 @@ class TensorflowAI {
     candles: IOHLCV[],
     features: number[][],
     hourly: IHourlyContext,
-    futures: IFuturesContext,
+    context: IMarketContext,
     fromIndex = 0,
     // during retraining the DQN learns from the new forecast model before it goes live
     bundle = this.liveForecast(pair)
@@ -391,7 +392,7 @@ class TensorflowAI {
     const indexes: number[] = [];
     const inputs: IForecastInput[] = [];
     for (let t = Math.max(fromIndex, 0); t < candles.length; t++) {
-      const input = forecastInputAt(t, candles, features, hourly, futures, this.forecastWindow, this.hourWindow);
+      const input = forecastInputAt(t, candles, features, hourly, context, this.forecastWindow, this.hourWindow);
       if (input) {
         indexes.push(t);
         inputs.push(input);
@@ -425,7 +426,7 @@ class TensorflowAI {
     candles: IOHLCV[],
     features: number[][],
     hourly: IHourlyContext,
-    futures: IFuturesContext,
+    context: IMarketContext,
     feedback: ILiveFeedback
   ): Promise<IForecastBundle | null> => {
     const layout = FORECAST_LAYOUT;
@@ -434,7 +435,7 @@ class TensorflowAI {
       candles,
       features,
       hourly,
-      futures,
+      context,
       this.forecastWindow,
       this.hourWindow,
       layout,
@@ -873,9 +874,9 @@ class TensorflowAI {
    * candles up to i, the same as in live trading.
    */
   public prepareBacktest(pair: CryptoPairs, dataset: IMarketDataset, fromTime: number): IBacktestInputs {
-    const { candles, features, hourly, futures } = this.prepareInputs(dataset, false);
+    const { candles, features, hourly, context } = this.prepareInputs(dataset, false);
     const startIndex = candles.findIndex((c) => c.time >= fromTime);
-    const raw = this.forecastSeries(pair, candles, features, hourly, futures, Math.max(0, startIndex - this.dqnTimeSteps));
+    const raw = this.forecastSeries(pair, candles, features, hourly, context, Math.max(0, startIndex - this.dqnTimeSteps));
     return {
       pair,
       candles,
@@ -923,20 +924,42 @@ class TensorflowAI {
     // keep the reference list aligned with the config even if some reference data is missing
     const references = cryptoConfig.marketData.referencePairs.map((_, i) => dataset.references[i] ?? { minute: [], hour: [] });
     const candles = toOHLCV(dataset.minute).filter((c) => !closedOnly || c.time + 60 <= now);
+    // switched-off feature groups get empty series, which become zeros: the model layout stays the same
+    const enabled = cryptoConfig.features;
+    const useReference = (i: number) => i === 0 || enabled.extraReferences;
+    const premium = enabled.premiumIndex ? dataset.premium : { minute: [], hour: [] };
+    const context: IMarketContext = {
+      futures: buildFuturesContext(dataset.futures, dataset.funding),
+      external: buildExternalContext(dataset.dvol, dataset.stablecoins, dataset.fearGreed),
+    };
     return {
       candles,
       features: buildCandleFeatures(
         candles,
-        references.map((r) => toOHLCV(r.minute)),
-        60
+        references.map((r, i) => (useReference(i) ? toOHLCV(r.minute) : [])),
+        60,
+        premium.minute
       ),
       hourly: buildHourlyContext(
         toOHLCV(dataset.hour),
-        references.map((r) => toOHLCV(r.hour))
+        references.map((r, i) => (useReference(i) ? toOHLCV(r.hour) : [])),
+        premium.hour
       ),
-      futures: buildFuturesContext(dataset.futures, dataset.funding),
+      context,
     };
   }
+
+  /**
+   * Trains a forecast model on the dataset and returns its evaluation metrics without putting it into use.
+   * Used to measure what each feature group adds (`yarn features:report`).
+   */
+  public evaluateForecast = async (pair: CryptoPairs, dataset: IMarketDataset): Promise<IForecastMetrics | null> => {
+    const { candles, features, hourly, context } = this.prepareInputs(dataset, false);
+    const noFeedback: ILiveFeedback = { outputs: null, directionAccuracy: null, hardSampleIndexes: new Set(), decisions: [] };
+    const bundle = await this.trainForecast(pair, candles, features, hourly, context, noFeedback);
+    bundle?.model.dispose();
+    return bundle?.metrics ?? null;
+  };
 
   public async trainAllModels(
     datasets: Map<CryptoPairs, IMarketDataset>,
@@ -962,7 +985,7 @@ class TensorflowAI {
       return false;
     }
 
-    const { candles, features, hourly, futures } = this.prepareInputs(dataset, false);
+    const { candles, features, hourly, context } = this.prepareInputs(dataset, false);
     if (candles.length < Math.max(INDICATOR_WARMUP, this.dqnTimeSteps) + 50) {
       log(`[**] Not enough candles to train ${pair}`, Colors.RED);
       return false;
@@ -987,11 +1010,11 @@ class TensorflowAI {
     }
 
     // everything is trained on copies; the bot keeps trading with the current models meanwhile
-    const newForecast = await this.trainForecast(pair, candles, features, hourly, futures, feedback);
+    const newForecast = await this.trainForecast(pair, candles, features, hourly, context, feedback);
     const forecast = newForecast ?? this.liveForecast(pair);
     const forecasts = this.dqnForecastFeature(
       pair,
-      this.forecastSeries(pair, candles, features, hourly, futures, 0, forecast),
+      this.forecastSeries(pair, candles, features, hourly, context, 0, forecast),
       forecast?.metrics
     );
 
@@ -1063,11 +1086,11 @@ class TensorflowAI {
 
         // the still-open current minute is never used
         const now = Math.floor(Date.now() / 1000);
-        const { candles, features, hourly, futures } = this.prepareInputs(dataset, true);
+        const { candles, features, hourly, context } = this.prepareInputs(dataset, true);
         const last = candles[candles.length - 1];
 
         // forecast only for the candles the DQN window needs
-        const rawSeries = this.forecastSeries(pair, candles, features, hourly, futures, candles.length - this.dqnTimeSteps);
+        const rawSeries = this.forecastSeries(pair, candles, features, hourly, context, candles.length - this.dqnTimeSteps);
         const raw = rawSeries[rawSeries.length - 1];
         if (this.forecastModelsMap.has(pair) && !raw) {
           log(`[**] ${pair}: forecast skipped — not enough fresh minute / hourly candles`, Colors.YELLOW);

@@ -2,7 +2,9 @@ import path from "path";
 import { Worker } from "worker_threads";
 
 import cryptoConfig from "../../config/crypto.config";
-import { log, Colors } from "../../utils/colored-console";
+import { createLogger, Colors } from "../../utils/colored-console";
+
+const log = createLogger("recorders");
 
 const RESTART_DELAY_MS = 10_000;
 const STOP_TIMEOUT_MS = 15_000;
@@ -19,7 +21,7 @@ class CollectorsService {
 
   public start(): void {
     if (!cryptoConfig.collectors.enabled) {
-      log("[collector] Recorders are disabled (COLLECTORS_ENABLED=false)", Colors.YELLOW);
+      log("Recorders are disabled (COLLECTORS_ENABLED=false)", Colors.YELLOW);
       return;
     }
     this.spawn();
@@ -37,11 +39,11 @@ class CollectorsService {
     worker.on("message", (message) => {
       if (message === "locked") this.locked = true;
     });
-    worker.on("error", (error) => log(`[collector] Worker error: ${error.message}`, Colors.RED));
+    worker.on("error", (error) => log(`Worker error: ${error.message}`, Colors.RED));
     worker.on("exit", (code) => {
       this.worker = null;
       if (this.stopping || this.locked) return;
-      log(`[collector] Worker exited (code ${code}), restarting in ${RESTART_DELAY_MS / 1000}s`, Colors.RED);
+      log(`Worker exited (code ${code}), restarting in ${RESTART_DELAY_MS / 1000}s`, Colors.RED);
       setTimeout(() => !this.stopping && this.spawn(), RESTART_DELAY_MS);
     });
   }

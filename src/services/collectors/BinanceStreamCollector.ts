@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 
 import cryptoConfig from "../../config/crypto.config";
-import { log, Colors } from "../../utils/colored-console";
+import { createLogger, Colors } from "../../utils/colored-console";
 import { RollingGzipWriter } from "./RollingGzipWriter";
 
 const MAX_RECONNECT_DELAY_MS = 60_000;
@@ -24,12 +24,16 @@ export abstract class BinanceStreamCollector {
   private stopped = false;
   public reconnects = 0;
 
+  protected readonly log: ReturnType<typeof createLogger>;
+
   constructor(
+    tag: string, // log prefix, e.g. "orderbook"
     public readonly name: string, // e.g. "ETH-USDT/futures-trades"
     private readonly url: string,
     // how long the stream may stay silent before the connection is considered dead
     private readonly silenceTimeoutMs = cryptoConfig.collectors.silenceTimeoutSeconds * 1000
   ) {
+    this.log = createLogger(tag);
     this.dir = path.join(cryptoConfig.collectors.storageDir, name);
     fs.mkdirSync(this.dir, { recursive: true });
     this.writer = new RollingGzipWriter(this.dir);
@@ -51,7 +55,7 @@ export abstract class BinanceStreamCollector {
     this.connect();
     this.watchdog = setInterval(() => {
       if (this.ws && this.lastMessageAt && Date.now() - this.lastMessageAt > this.silenceTimeoutMs) {
-        log(`[collector] ${this.name}: no data for ${this.silenceTimeoutMs / 1000}s, reconnecting`, Colors.YELLOW);
+        this.log(`${this.name}: no data for ${this.silenceTimeoutMs / 1000}s, reconnecting`, Colors.YELLOW);
         this.reconnectNow();
       }
     }, 10_000);
@@ -83,7 +87,7 @@ export abstract class BinanceStreamCollector {
     ws.onopen = () => {
       if (this.disconnectedAt) {
         this.journal({ type: "gap", from: this.disconnectedAt, to: Date.now() });
-        log(`[collector] ${this.name}: reconnected after ${((Date.now() - this.disconnectedAt) / 1000).toFixed(1)}s`, Colors.GREEN);
+        this.log(`${this.name}: reconnected after ${((Date.now() - this.disconnectedAt) / 1000).toFixed(1)}s`, Colors.GREEN);
       }
       this.disconnectedAt = null;
       this.reconnectDelay = 1000;
@@ -96,7 +100,7 @@ export abstract class BinanceStreamCollector {
       try {
         this.handle(JSON.parse(String(event.data)), receivedAt);
       } catch (error) {
-        log(`[collector] ${this.name}: cannot process message: ${error}`, Colors.RED);
+        this.log(`${this.name}: cannot process message: ${error}`, Colors.RED);
       }
     };
 
@@ -110,8 +114,8 @@ export abstract class BinanceStreamCollector {
       if (this.stopped) return;
       this.disconnectedAt ??= this.lastMessageAt || Date.now();
       this.reconnects++;
-      log(
-        `[collector] ${this.name}: connection closed (${event.code}${event.reason ? ` ${event.reason}` : ""}), ` +
+      this.log(
+        `${this.name}: connection closed (${event.code}${event.reason ? ` ${event.reason}` : ""}), ` +
           `retry in ${this.reconnectDelay / 1000}s`,
         Colors.YELLOW
       );

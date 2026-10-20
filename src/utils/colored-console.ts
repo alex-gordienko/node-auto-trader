@@ -23,4 +23,10 @@ function getRandomEnumValue<T extends object>(enumObj: T): T[keyof T] {
   return enumValues[randomIndex] as T[keyof T];
 }
 
-export { log, Colors, getRandomEnumValue };
+/** Logger that prefixes every message with a tag, e.g. "[dvol] loaded 8760 rows". */
+const createLogger =
+  (tag: string) =>
+  (message: unknown, color?: Colors): void =>
+    log(`[${tag}] ${message}`, color);
+
+export { log, createLogger, Colors, getRandomEnumValue };

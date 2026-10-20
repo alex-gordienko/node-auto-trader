@@ -11,7 +11,7 @@ export class TradesCollector extends BinanceStreamCollector {
   constructor(symbol: MarketSymbol, market: "spot" | "futures") {
     const { spotStreamUrl, futuresMarketStreamUrl } = cryptoConfig.collectors;
     const stream = `${symbol.replace("-", "").toLowerCase()}@aggTrade`;
-    super(`${symbol}/${market}-trades`, `${market === "spot" ? spotStreamUrl : futuresMarketStreamUrl}/${stream}`);
+    super("trades", `${symbol}/${market}-trades`, `${market === "spot" ? spotStreamUrl : futuresMarketStreamUrl}/${stream}`);
   }
 
   protected handle(message: any, receivedAt: number): void {

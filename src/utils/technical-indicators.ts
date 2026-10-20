@@ -274,8 +274,41 @@ export const buildReferenceFeatures = (candles: IOHLCV[], reference: IOHLCV[], s
 };
 
 /** Market features followed by features against every reference market. */
-export const buildCandleFeatures = (candles: IOHLCV[], references: IOHLCV[][], step: number): number[][] => {
+/** Futures premium per candle: current value and its average over `window` bars, in basis points. */
+export const PREMIUM_FEATURE_COUNT = 2;
+
+/** A point of the premium series aligned with a candle (same open time). */
+export interface IPremiumPoint {
+  time: number;
+  close: number;
+}
+
+export const buildPremiumFeatures = (candles: IOHLCV[], premium: IPremiumPoint[], window: number): number[][] => {
+  const byTime = new Map<number, number>();
+  premium.forEach((p) => byTime.set(p.time, p.close * 1e4));
+  const values = candles.map((c) => byTime.get(c.time));
+  const recent: number[] = [];
+  return values.map((value) => {
+    if (value === undefined) return new Array(PREMIUM_FEATURE_COUNT).fill(0);
+    recent.push(value);
+    if (recent.length > window) recent.shift();
+    return [value, recent.reduce((sum, v) => sum + v, 0) / recent.length];
+  });
+};
+
+/**
+ * Market features, then features against every reference market, then the futures premium.
+ * An empty reference or premium series gives zeros (missing data or a feature group switched off).
+ */
+export const buildCandleFeatures = (
+  candles: IOHLCV[],
+  references: IOHLCV[][],
+  step: number,
+  premium: IPremiumPoint[] = []
+): number[][] => {
   const market = buildMarketFeatures(candles);
   const relative = references.map((reference) => buildReferenceFeatures(candles, reference, step));
-  return market.map((row, i) => relative.reduce((acc, ref) => acc.concat(ref[i]), row));
+  // average over the last hour of minute bars, or the last day of hourly bars
+  const premiumRows = buildPremiumFeatures(candles, premium, step === 60 ? 60 : 24);
+  return market.map((row, i) => relative.reduce((acc, ref) => acc.concat(ref[i]), row).concat(premiumRows[i]));
 };

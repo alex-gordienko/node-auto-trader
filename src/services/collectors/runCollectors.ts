@@ -2,7 +2,9 @@ import fs from "fs";
 import path from "path";
 
 import cryptoConfig from "../../config/crypto.config";
-import { log, Colors } from "../../utils/colored-console";
+import { createLogger, Colors } from "../../utils/colored-console";
+
+const log = createLogger("recorders");
 import { BinanceStreamCollector } from "./BinanceStreamCollector";
 import { LiquidationsCollector } from "./LiquidationsCollector.service";
 import { OrderBookCollector } from "./OrderBookCollector.service";
@@ -37,7 +39,7 @@ const acquireLock = (): string | null => {
   if (fs.existsSync(lockPath)) {
     const pid = Number(fs.readFileSync(lockPath, "utf-8"));
     if (pid && pid !== process.pid && isAlive(pid)) {
-      log(`[collector] Already recording in process ${pid} (${lockPath}), not starting a second recorder`, Colors.YELLOW);
+      log(`Already recording in process ${pid} (${lockPath}), not starting a second recorder`, Colors.YELLOW);
       return null;
     }
   }
@@ -62,7 +64,7 @@ export const startCollectors = (): ICollectorsHandle | null => {
   collectors.push(new LiquidationsCollector());
 
   log(
-    `[collector] Recording ${collectors.map((c) => c.name).join(", ")} to ${cryptoConfig.collectors.storageDir}`,
+    `Recording ${collectors.map((c) => c.name).join(", ")} to ${cryptoConfig.collectors.storageDir}`,
     Colors.GREEN
   );
   collectors.forEach((c) => c.start());
@@ -74,7 +76,7 @@ export const startCollectors = (): ICollectorsHandle | null => {
       previousRows.set(c.name, c.rows);
       return `${c.name} +${added}${c.reconnects ? ` (${c.reconnects} reconnects)` : ""}`;
     });
-    log(`[collector] last ${STATUS_EVERY_MS / 60000} min: ${status.join(" | ")}`, Colors.CYAN);
+    log(`last ${STATUS_EVERY_MS / 60000} min: ${status.join(" | ")}`, Colors.CYAN);
   }, STATUS_EVERY_MS);
 
   return {

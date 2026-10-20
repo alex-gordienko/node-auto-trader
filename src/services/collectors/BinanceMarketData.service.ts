@@ -1,11 +1,10 @@
-import axios from "axios";
-import AdmZip from "adm-zip";
-import { format } from "date-fns";
+import cryptoConfig from "../../config/crypto.config";
+import { CryptoBase } from "../../types/basic.types";
+import { CandleTimeframe, IFundingRate, IFuturesMetrics, IMarketCandle, MarketSymbol } from "../../types/marketData.types";
+import { createLogger, Colors } from "../../utils/colored-console";
+import BinanceClient from "./BinanceClient";
 
-import cryptoConfig from "../config/crypto.config";
-import { CryptoBase } from "../types/basic.types";
-import { CandleTimeframe, IFundingRate, IFuturesMetrics, IMarketCandle, MarketSymbol } from "../types/marketData.types";
-import { log, Colors } from "../utils/colored-console";
+const log = createLogger("binance");
 
 // Binance kline row: [openTime, open, high, low, close, volume, closeTime, quoteVolume, trades, takerBuyBase, takerBuyQuote, ignore]
 type BinanceKline = (string | number)[];
@@ -29,29 +28,20 @@ const METRIC_FIELDS: (keyof IFuturesMetrics)[] = [
 ];
 
 /**
- * Free market data from Binance (no API key):
- * - spot klines (REST for updates, data.binance.vision archives for history), incl. trade count and taker buy volume;
- * - USDⓈ-M futures: open interest, long/short ratios, taker buy/sell ratio (5-minute) and funding rates.
+ * Binance market data collector:
+ * - spot klines (REST for updates, archives for history), incl. trade count and taker buy volume;
+ * - USDⓈ-M futures: open interest, long/short ratios, taker buy/sell ratio (5-minute) and funding rates;
+ * - current prices.
  */
 class BinanceMarketDataService {
   private readonly priceCache: Map<string, { value: number; expiresAt: number }> = new Map();
-  private blockedUntil = 0;
 
   constructor() {
-    log("[*] Initializing Binance Market Data Service", Colors.WHITE);
-  }
-
-  private symbol(pair: MarketSymbol): string {
-    return pair.replace("-", "");
-  }
-
-  /** Archive timestamps are in microseconds since 2025, REST ones in milliseconds. */
-  private toSeconds(timestamp: number): number {
-    return timestamp > 1e14 ? Math.floor(timestamp / 1e6) : Math.floor(timestamp / 1e3);
+    log("initializing Binance market data collector", Colors.WHITE);
   }
 
   private toCandle = (row: BinanceKline): IMarketCandle => ({
-    time: this.toSeconds(Number(row[0])),
+    time: BinanceClient.toSeconds(Number(row[0])),
     open: Number(row[1]),
     high: Number(row[2]),
     low: Number(row[3]),
@@ -62,79 +52,6 @@ class BinanceMarketDataService {
     takerBuyBase: Number(row[9]),
     takerBuyQuote: Number(row[10]),
   });
-
-  /** Tries each base URL in turn; pauses all requests if Binance asks us to back off. */
-  private async get<T>(baseUrls: string[], path: string, params: Record<string, string | number>): Promise<T | null> {
-    if (Date.now() < this.blockedUntil) {
-      log(`Binance is rate limited until ${new Date(this.blockedUntil).toLocaleTimeString()}, skipping request`, Colors.YELLOW);
-      return null;
-    }
-
-    for (const baseUrl of baseUrls) {
-      try {
-        const response = await axios.get<T>(`${baseUrl}${path}`, { params, timeout: 15000 });
-        return response.data;
-      } catch (error: any) {
-        const status = error?.response?.status;
-        if (status === 429 || status === 418) {
-          const retryAfter = Number(error.response.headers?.["retry-after"] ?? 60);
-          this.blockedUntil = Date.now() + retryAfter * 1000;
-          log(`Binance rate limit reached (${status}), pausing requests for ${retryAfter}s`, Colors.RED);
-          return null;
-        }
-        if (status === 400) {
-          log(`Binance rejected ${path}: ${JSON.stringify(error.response.data)}`, Colors.RED);
-          return null;
-        }
-        log(`Binance request to ${baseUrl}${path} failed: ${error?.message}`, Colors.YELLOW);
-      }
-    }
-    return null;
-  }
-
-  private getSpot<T>(path: string, params: Record<string, string | number>) {
-    return this.get<T>(cryptoConfig.marketData.binanceApiUrls, path, params);
-  }
-
-  private getFutures<T>(path: string, params: Record<string, string | number>) {
-    return this.get<T>([cryptoConfig.marketData.binanceFuturesApiUrl], path, params);
-  }
-
-  /** Downloads a data.binance.vision ZIP and returns its CSV rows (header skipped); null if not published yet. */
-  private async downloadArchiveRows(path: string): Promise<string[][] | null> {
-    const url = `${cryptoConfig.marketData.binanceArchiveUrl}/data/${path}`;
-    try {
-      const response = await axios.get<ArrayBuffer>(url, { responseType: "arraybuffer", timeout: 60000 });
-      const zip = new AdmZip(Buffer.from(response.data));
-      const csv = zip.getEntries().find((e) => e.entryName.endsWith(".csv"));
-      if (!csv) return null;
-      return csv
-        .getData()
-        .toString("utf-8")
-        .split("\n")
-        .map((line) => line.trim())
-        // skip empty lines and a header row if present
-        .filter((line) => line && /^\d/.test(line))
-        .map((line) => line.split(","));
-    } catch (error: any) {
-      if (error?.response?.status !== 404) {
-        log(`Binance archive ${path} download failed: ${error?.message}`, Colors.YELLOW);
-      }
-      return null;
-    }
-  }
-
-  /** Calendar days (UTC, "yyyy-MM-dd") from `fromSec` up to yesterday — the ones daily archives can exist for. */
-  private pastDays(fromSec: number): string[] {
-    const days: string[] = [];
-    const today = new Date().toISOString().slice(0, 10);
-    for (let t = fromSec; ; t += 86400) {
-      const day = new Date(t * 1000).toISOString().slice(0, 10);
-      if (day >= today) break;
-      days.push(day);
-    }
-    return days;
-  }
 
   // ---------- spot candles ----------
 
@@ -149,8 +66,8 @@ class BinanceMarketDataService {
     let cursor = fromSec;
 
     while (cursor + step <= now) {
-      const rows = await this.getSpot<BinanceKline[]>("/api/v3/klines", {
-        symbol: this.symbol(symbol),
+      const rows = await BinanceClient.getSpot<BinanceKline[]>("/api/v3/klines", {
+        symbol: BinanceClient.symbol(symbol),
         interval: INTERVAL[timeframe],
         startTime: cursor * 1000,
         limit: MAX_KLINES_PER_REQUEST,
@@ -174,9 +91,9 @@ class BinanceMarketDataService {
     period: "monthly" | "daily",
     key: string
   ): Promise<IMarketCandle[] | null> => {
-    const s = this.symbol(symbol);
+    const s = BinanceClient.symbol(symbol);
     const interval = INTERVAL[timeframe];
-    const rows = await this.downloadArchiveRows(`spot/${period}/klines/${s}/${interval}/${s}-${interval}-${key}.zip`);
+    const rows = await BinanceClient.downloadArchiveRows(`spot/${period}/klines/${s}/${interval}/${s}-${interval}-${key}.zip`);
     return rows?.map(this.toCandle) ?? null;
   };
 
@@ -190,21 +107,15 @@ class BinanceMarketDataService {
     const byTime = new Map<number, IMarketCandle>();
     const add = (candles: IMarketCandle[] | null) => candles?.forEach((c) => c.time >= from && byTime.set(c.time, c));
 
-    const currentMonth = format(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1), "yyyy-MM");
-    const cursor = new Date(from * 1000);
-    cursor.setUTCDate(1);
+    log(`${symbol}: loading ${days} days of ${timeframe} candles from archives`, Colors.BLUE);
 
-    log(`[**] ${symbol}: loading ${days} days of ${timeframe} candles from Binance archives`, Colors.BLUE);
-
-    while (format(cursor.getTime(), "yyyy-MM") < currentMonth) {
-      const key = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`;
-      add(await this.downloadKlineArchive(symbol, timeframe, "monthly", key));
-      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    for (const month of BinanceClient.pastMonths(from)) {
+      add(await this.downloadKlineArchive(symbol, timeframe, "monthly", month));
     }
 
     // a monthly archive appears only after the month ends; fill the current month day by day
     const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / 1000;
-    for (const day of this.pastDays(Math.max(from, monthStart))) {
+    for (const day of BinanceClient.pastDays(Math.max(from, monthStart))) {
       add(await this.downloadKlineArchive(symbol, timeframe, "daily", day));
     }
 
@@ -214,7 +125,7 @@ class BinanceMarketDataService {
     add(await this.fetchRange(symbol, timeframe, lastTime + STEP_SECONDS[timeframe]));
 
     const candles = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
-    log(`[**] ${symbol}: loaded ${candles.length} ${timeframe} candles from Binance`, Colors.BLUE);
+    log(`${symbol}: loaded ${candles.length} ${timeframe} candles`, Colors.BLUE);
     return candles;
   };
 
@@ -225,7 +136,7 @@ class BinanceMarketDataService {
    * per page, merged by timestamp. Rows not returned by every endpoint are dropped.
    */
   public fetchFuturesMetrics = async (pair: MarketSymbol, fromSec: number): Promise<IFuturesMetrics[] | null> => {
-    const symbol = this.symbol(pair);
+    const symbol = BinanceClient.symbol(pair);
     const now = Math.floor(Date.now() / 1000);
     const result: IFuturesMetrics[] = [];
 
@@ -245,7 +156,7 @@ class BinanceMarketDataService {
       let maxTime = 0;
 
       for (const [path, map] of endpoints) {
-        const rows = await this.getFutures<Row[]>(path, {
+        const rows = await BinanceClient.getFutures<Row[]>(path, {
           symbol,
           period: "5m",
           startTime: cursor * 1000,
@@ -254,7 +165,7 @@ class BinanceMarketDataService {
         if (!rows) return result.length ? result : null;
         maxRows = Math.max(maxRows, rows.length);
         rows.forEach((r) => {
-          const time = this.toSeconds(Number(r.timestamp));
+          const time = BinanceClient.toSeconds(Number(r.timestamp));
           byTime.set(time, { ...byTime.get(time), time, ...map(r) });
           maxTime = Math.max(maxTime, time);
         });
@@ -270,14 +181,14 @@ class BinanceMarketDataService {
 
   /** Futures metrics history from daily archives (a year back is available) plus REST for the last day. */
   public backfillFuturesMetrics = async (pair: MarketSymbol, days: number): Promise<IFuturesMetrics[]> => {
-    const symbol = this.symbol(pair);
+    const symbol = BinanceClient.symbol(pair);
     const from = Math.floor(Date.now() / 1000) - days * 86400;
     const byTime = new Map<number, IFuturesMetrics>();
 
-    log(`[**] ${pair}: loading ${days} days of futures metrics from Binance archives`, Colors.BLUE);
+    log(`${pair}: loading ${days} days of futures metrics from archives`, Colors.BLUE);
 
-    for (const day of this.pastDays(from)) {
-      const rows = await this.downloadArchiveRows(`futures/um/daily/metrics/${symbol}/${symbol}-metrics-${day}.zip`);
+    for (const day of BinanceClient.pastDays(from)) {
+      const rows = await BinanceClient.downloadArchiveRows(`futures/um/daily/metrics/${symbol}/${symbol}-metrics-${day}.zip`);
       // create_time, symbol, sum_open_interest, sum_open_interest_value, count_toptrader_long_short_ratio,
       // sum_toptrader_long_short_ratio, count_long_short_ratio, sum_taker_long_short_vol_ratio
       rows?.forEach((r) => {
@@ -299,7 +210,7 @@ class BinanceMarketDataService {
     (await this.fetchFuturesMetrics(pair, lastTime + FUTURES_PERIOD_SECONDS))?.forEach((m) => byTime.set(m.time, m));
 
     const metrics = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
-    log(`[**] ${pair}: loaded ${metrics.length} futures metric rows from Binance`, Colors.BLUE);
+    log(`${pair}: loaded ${metrics.length} futures metric rows`, Colors.BLUE);
     return metrics;
   };
 
@@ -310,14 +221,14 @@ class BinanceMarketDataService {
     let cursor = fromSec;
 
     while (cursor < now) {
-      const rows = await this.getFutures<{ fundingTime: number; fundingRate: string }[]>("/fapi/v1/fundingRate", {
-        symbol: this.symbol(pair),
+      const rows = await BinanceClient.getFutures<{ fundingTime: number; fundingRate: string }[]>("/fapi/v1/fundingRate", {
+        symbol: BinanceClient.symbol(pair),
         startTime: cursor * 1000,
         limit: MAX_KLINES_PER_REQUEST,
       });
       if (!rows) return result.length ? result : null;
       if (!rows.length) break;
-      result.push(...rows.map((r) => ({ time: this.toSeconds(r.fundingTime), rate: Number(r.fundingRate) })));
+      result.push(...rows.map((r) => ({ time: BinanceClient.toSeconds(r.fundingTime), rate: Number(r.fundingRate) })));
       cursor = result[result.length - 1].time + 1;
       if (rows.length < MAX_KLINES_PER_REQUEST) break;
     }
@@ -337,7 +248,7 @@ class BinanceMarketDataService {
 
     const ttl = cryptoConfig.marketData.priceCacheTtlSeconds * 1000;
     for (const [symbol, invert] of [[`${base}${to}`, false], [`${to}${base}`, true]] as [string, boolean][]) {
-      const ticker = await this.getSpot<{ price: string }>("/api/v3/ticker/price", { symbol });
+      const ticker = await BinanceClient.getSpot<{ price: string }>("/api/v3/ticker/price", { symbol });
       const price = Number(ticker?.price);
       if (price > 0) {
         this.priceCache.set(symbol, { value: price, expiresAt: now + ttl });
