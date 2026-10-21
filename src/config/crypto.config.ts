@@ -169,9 +169,10 @@ const cryptoConfig = {
     replaySize: Number(process.env.RL_REPLAY_SIZE || 50000),
     batchSize: Number(process.env.RL_BATCH_SIZE || 64),
     episodes: Number(process.env.RL_EPISODES || 40),
-    // the DQN decides (and may trade) once per this many minutes — in training and in live trading
-    decisionMinutes: Number(process.env.RL_DECISION_MINUTES || 60),
-    // each episode is a random segment of this many decisions (500 hourly decisions ≈ 3 weeks)
+    // the DQN decides (and may trade) once per this many minutes — in training and in live trading;
+    // keep AUTO_PREDICTION_INTERVAL at most this, or decisions are skipped
+    decisionMinutes: Number(process.env.RL_DECISION_MINUTES || 5),
+    // each episode is a random segment of this many decisions (500 decisions every 5 min ≈ 1.7 days)
     episodeSteps: Number(process.env.RL_EPISODE_STEPS || 500),
     trainEvery: Number(process.env.RL_TRAIN_EVERY || 4),
     targetUpdateEvery: Number(process.env.RL_TARGET_UPDATE_EVERY || 200),
