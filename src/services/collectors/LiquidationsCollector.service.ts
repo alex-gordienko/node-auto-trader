@@ -19,7 +19,7 @@ export class LiquidationsCollector extends BinanceStreamCollector {
     for (const event of events) {
       const o = event?.o;
       if (event?.e !== "forceOrder" || !o) continue;
-      this.writer.write([o.T, o.s, o.S, Number(o.p), Number(o.ap), Number(o.z)], receivedAt);
+      this.record([o.T, o.s, o.S, Number(o.p), Number(o.ap), Number(o.z)], receivedAt);
     }
   }
 }

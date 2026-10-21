@@ -1,9 +1,11 @@
 import { INDICATOR_WARMUP, IOHLCV } from "../../utils/technical-indicators";
 import { CANDLE_FEATURE_COUNT, FORECAST_LAYOUT } from "../../utils/tensorflow.helpers";
+import { ORDERFLOW_VERDICT_COUNT } from "../../utils/orderflow.features";
 
-// market features + forecast of the price path + position + unrealized PnL
-export const DQN_FEATURE_COUNT = CANDLE_FEATURE_COUNT + FORECAST_LAYOUT.count + 2;
-const EMPTY_FORECAST: number[] = new Array(FORECAST_LAYOUT.count).fill(0);
+// market features + model signals (forecast of the price path, order-book verdict) + position + unrealized PnL
+export const SIGNAL_COUNT = FORECAST_LAYOUT.count + ORDERFLOW_VERDICT_COUNT;
+export const DQN_FEATURE_COUNT = CANDLE_FEATURE_COUNT + SIGNAL_COUNT + 2;
+const EMPTY_FORECAST: number[] = new Array(SIGNAL_COUNT).fill(0);
 
 export const RLAction = {
   Hold: 0,

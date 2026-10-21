@@ -60,6 +60,20 @@ const cryptoConfig = {
     fearGreed: (process.env.FEATURE_FEAR_GREED || "true") === "true",
     // time of week, trading session, volatility / trend regime, distance to round prices and recent highs / lows
     regime: (process.env.FEATURE_REGIME || "true") === "true",
+    // verdict of the order-book model (OrderFlow.service) as a DQN input
+    orderFlow: (process.env.FEATURE_ORDER_FLOW || "true") === "true",
+  },
+
+  // Order-book model: learns from the recorded order books, trades and liquidations what the price does in the
+  // next 10 s / 1 min / 5 min; its verdict is a DQN input. History exists only since recording started.
+  orderFlow: {
+    windowSeconds: Number(process.env.ORDERFLOW_WINDOW_SECONDS || 60),
+    trainingDays: Number(process.env.ORDERFLOW_TRAINING_DAYS || 14),
+    sampleStepSeconds: Number(process.env.ORDERFLOW_SAMPLE_STEP || 5),
+    maxSamples: Number(process.env.ORDERFLOW_MAX_SAMPLES || 60000),
+    epochs: Number(process.env.ORDERFLOW_EPOCHS || 40),
+    // below this much recorded data the model is not trained (and its verdict is zeros)
+    minHours: Number(process.env.ORDERFLOW_MIN_HOURS || 24),
   },
 
   forecast: {

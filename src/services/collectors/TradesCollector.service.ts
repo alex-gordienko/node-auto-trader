@@ -16,6 +16,6 @@ export class TradesCollector extends BinanceStreamCollector {
 
   protected handle(message: any, receivedAt: number): void {
     if (message.e !== "aggTrade") return;
-    this.writer.write([message.T, Number(message.p), Number(message.q), message.m ? 1 : 0], receivedAt);
+    this.record([message.T, Number(message.p), Number(message.q), message.m ? 1 : 0], receivedAt);
   }
 }

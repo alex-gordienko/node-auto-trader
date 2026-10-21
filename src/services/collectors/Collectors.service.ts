@@ -2,6 +2,7 @@ import path from "path";
 import { Worker } from "worker_threads";
 
 import cryptoConfig from "../../config/crypto.config";
+import OrderFlowService from "../OrderFlow.service";
 import { createLogger, Colors } from "../../utils/colored-console";
 
 const log = createLogger("recorders");
@@ -38,6 +39,8 @@ class CollectorsService {
 
     worker.on("message", (message) => {
       if (message === "locked") this.locked = true;
+      // live order-flow features for the order-book model
+      if (message?.type === "orderflow") OrderFlowService.addLive(message.symbol, message.second, message.vector);
     });
     worker.on("error", (error) => log(`Worker error: ${error.message}`, Colors.RED));
     worker.on("exit", (code) => {

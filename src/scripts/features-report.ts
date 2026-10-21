@@ -28,6 +28,7 @@ const LABELS: Record<FeatureGroup, string> = {
   stablecoins: "stablecoins",
   fearGreed: "fear & greed",
   regime: "market regime",
+  orderFlow: "order-book verdict (DQN only, not measured here)",
 };
 
 const VARIANTS: { name: string; groups: FeatureGroup[] }[] = [

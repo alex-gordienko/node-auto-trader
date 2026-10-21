@@ -52,6 +52,7 @@ import {
   TradingEnvironment,
 } from "./rl/trading-env";
 import { ITransition, ReplayBuffer } from "./rl/replay-buffer";
+import OrderFlowService, { IOrderFlowBundle } from "./OrderFlow.service";
 
 const tf: typeof tfType = cryptoConfig.useGPU ? require("@tensorflow/tfjs-node-gpu") : require("@tensorflow/tfjs-node");
 
@@ -413,6 +414,11 @@ class TensorflowAI {
   }
 
   /** What the DQN sees: only the outputs that proved useful on held-out data, the rest are zeros. */
+  /** DQN signal columns per candle: forecast outputs followed by the order-book verdict. */
+  private withVerdicts(forecasts: number[][], verdicts: number[][]): number[][] {
+    return forecasts.map((row, i) => row.concat(verdicts[i]));
+  }
+
   private dqnForecastFeature(
     pair: CryptoPairs,
     series: (number[] | null)[],
@@ -439,6 +445,7 @@ class TensorflowAI {
   ): Promise<IForecastBundle | null> => {
     const layout = FORECAST_LAYOUT;
     const { maxTrainingSamples, sampleStride, epochs, patience, batchSize } = cryptoConfig.forecast;
+    log(`[**] ${pair} forecast: building training samples from ${candles.length} minute candles`, Colors.CYAN);
     const all = buildForecastSamples(
       candles,
       features,
@@ -508,11 +515,14 @@ class TensorflowAI {
     let bestWeights: tfType.Tensor[] | null = null;
     let badEpochs = 0;
     let epochsRun = 0;
+    let epochStartedAt = Date.now();
+    const maxEpochs = previous ? Math.ceil(epochs / 2) : epochs;
     const keepBest = new tf.CustomCallback({
       onEpochEnd: async (_epoch, logs) => {
         epochsRun++;
         const valLoss = logs?.val_loss ?? Infinity;
-        if (valLoss < bestLoss - 1e-5) {
+        const improved = valLoss < bestLoss - 1e-5;
+        if (improved) {
           bestLoss = valLoss;
           bestWeights?.forEach((w) => w.dispose());
           bestWeights = model.getWeights().map((w) => w.clone());
@@ -520,6 +530,13 @@ class TensorflowAI {
         } else if (++badEpochs >= patience) {
           model.stopTraining = true;
         }
+        log(
+          `[**] ${pair} forecast epoch ${epochsRun}/${maxEpochs}: loss ${(logs?.loss ?? NaN).toFixed(4)}, ` +
+            `val ${valLoss.toFixed(4)}${improved ? " (best)" : ` (no gain ${badEpochs}/${patience})`}, ` +
+            `${((Date.now() - epochStartedAt) / 1000).toFixed(0)}s`,
+          Colors.CYAN
+        );
+        epochStartedAt = Date.now();
       },
     });
 
@@ -532,7 +549,7 @@ class TensorflowAI {
 
     try {
       await model.fit(xTrain, yTrain, {
-        epochs: previous ? Math.ceil(epochs / 2) : epochs,
+        epochs: maxEpochs,
         batchSize,
         shuffle: true,
         validationData: [xCal, yCal],
@@ -891,7 +908,15 @@ class TensorflowAI {
       candles,
       startIndex,
       dqn: this.dqnFeatures(pair, features),
-      forecast: this.dqnForecastFeature(pair, raw),
+      // order-book history exists only for recent days: older periods get zero verdicts, as in training
+      forecast: this.withVerdicts(
+        this.dqnForecastFeature(pair, raw),
+        OrderFlowService.verdicts(
+          pair,
+          candles.map((c) => c.time),
+          "history"
+        )
+      ),
       raw,
     };
   }
@@ -1021,10 +1046,18 @@ class TensorflowAI {
     // everything is trained on copies; the bot keeps trading with the current models meanwhile
     const newForecast = await this.trainForecast(pair, candles, features, hourly, context, feedback);
     const forecast = newForecast ?? this.liveForecast(pair);
-    const forecasts = this.dqnForecastFeature(
-      pair,
-      this.forecastSeries(pair, candles, features, hourly, context, 0, forecast),
-      forecast?.metrics
+    // the order-book model only learns from recorded data, i.e. when this training reaches the present
+    // (backtest periods lie before recording started)
+    const reachesPresent = candles[candles.length - 1].time > Date.now() / 1000 - 86400;
+    const newOrderFlow = reachesPresent ? await OrderFlowService.train(pair) : null;
+    const forecasts = this.withVerdicts(
+      this.dqnForecastFeature(pair, this.forecastSeries(pair, candles, features, hourly, context, 0, forecast), forecast?.metrics),
+      OrderFlowService.verdicts(
+        pair,
+        candles.map((c) => c.time),
+        "history",
+        newOrderFlow ?? OrderFlowService.liveBundle(pair)
+      )
     );
 
     const policy = this.createDQNmodel();
@@ -1038,11 +1071,12 @@ class TensorflowAI {
       policy.dispose();
       target.dispose();
       newForecast?.model.dispose();
+      newOrderFlow?.model.dispose();
       log(`[**] ${pair}: retraining failed, the current models stay in use`, Colors.RED);
       return false;
     }
 
-    await this.commitModels(pair, newForecast, policy, target);
+    await this.commitModels(pair, newForecast, policy, target, newOrderFlow);
     return true;
   };
 
@@ -1054,8 +1088,11 @@ class TensorflowAI {
     pair: CryptoPairs,
     forecast: IForecastBundle | null,
     policy: tfType.LayersModel,
-    target: tfType.LayersModel
+    target: tfType.LayersModel,
+    orderFlow: IOrderFlowBundle | null = null
   ): Promise<void> {
+    // the DQN learned from this order-book model's verdicts: it goes live at the same moment
+    if (orderFlow) await OrderFlowService.commit(pair, orderFlow);
     const old = [
       forecast ? this.forecastModelsMap.get(pair) : undefined,
       this.modelsMap.get(pair),
@@ -1114,7 +1151,14 @@ class TensorflowAI {
         const state = buildInferenceState(
           candles,
           this.dqnFeatures(pair, features),
-          this.dqnForecastFeature(pair, rawSeries),
+          this.withVerdicts(
+            this.dqnForecastFeature(pair, rawSeries),
+            OrderFlowService.verdicts(
+              pair,
+              candles.map((c) => c.time),
+              "live"
+            )
+          ),
           this.dqnTimeSteps,
           position,
           entryPrice

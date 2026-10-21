@@ -39,7 +39,7 @@ export class OrderBookCollector extends BinanceStreamCollector {
     this.snapshotTimer = setInterval(() => {
       if (!this.latest || this.latestWritten) return;
       const { receivedAt, eventTime, bids, asks } = this.latest;
-      this.writer.write([receivedAt, eventTime, bids, asks], receivedAt);
+      this.record([receivedAt, eventTime, bids, asks], receivedAt);
       this.latestWritten = true;
     }, cryptoConfig.collectors.depthSnapshotMs);
   }

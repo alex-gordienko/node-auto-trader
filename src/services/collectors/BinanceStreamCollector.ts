@@ -39,8 +39,16 @@ export abstract class BinanceStreamCollector {
     this.writer = new RollingGzipWriter(this.dir);
   }
 
-  /** Converts one stream message into stored rows. */
+  /** Called with every stored row, so live order-flow features use exactly the rows that go to the files. */
+  public onRow: ((row: unknown[]) => void) | null = null;
+
+  /** Converts one stream message into stored rows (via `record`). */
   protected abstract handle(message: any, receivedAt: number): void;
+
+  protected record(row: unknown[], receivedAt: number): void {
+    this.writer.write(row, receivedAt);
+    this.onRow?.(row);
+  }
 
   public get rows(): number {
     return this.writer.rows;
