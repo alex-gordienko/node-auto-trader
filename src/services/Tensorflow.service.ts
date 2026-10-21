@@ -274,6 +274,14 @@ class TensorflowAI {
         model.dispose();
         return;
       }
+      // a switched-off group is fed as zeros: models trained with other groups must be retrained, not reused
+      const trainedWith = metrics.features ?? Object.fromEntries(Object.keys(cryptoConfig.features).map((k) => [k, true]));
+      if (JSON.stringify(trainedWith) !== JSON.stringify(cryptoConfig.features)) {
+        log(`[**] Feature groups changed since ${pair} models were trained, retraining them`, Colors.YELLOW);
+        model.dispose();
+        this.trainedPairs.delete(pair);
+        return;
+      }
       this.compileForecast(model);
       this.forecastModelsMap.set(pair, model);
       this.forecastMetricsMap.set(pair, metrics);
@@ -571,6 +579,7 @@ class TensorflowAI {
 
       const metrics: IForecastMetrics = {
         version: FORECAST_MODEL_VERSION,
+        features: { ...cryptoConfig.features },
         trainedAt: Date.now(),
         samples: n,
         evalSamples: evalY.length,

@@ -107,6 +107,8 @@ export interface IOutputCalibration {
 
 export interface IForecastMetrics {
   version: number;
+  // feature groups switched on during training (config.features); missing in older files = all on
+  features?: Record<string, boolean>;
   trainedAt: number;
   samples: number;
   evalSamples: number;

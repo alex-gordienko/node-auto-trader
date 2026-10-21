@@ -39,7 +39,7 @@ const hasGap = (rows: { time: number }[], maxSeconds: number) =>
 // what stays in memory between updates: enough for inference, the full history lives in storage
 const MEMORY_KEEP_SECONDS: Record<MarketSeries, number> = {
   "1m": 2 * 86400,
-  "1h": 30 * 86400,
+  "1h": 35 * 86400, // the 30-day trend feature needs 720 full hourly candles
   "futures-metrics": 3 * 86400, // 24h open interest change needs a day of history
   funding: 7 * 86400,
   "premium-1m": 2 * 86400,
@@ -57,6 +57,8 @@ const MEMORY_KEEP_SECONDS: Record<MarketSeries, number> = {
  */
 class MarketDataService {
   private cache: Map<string, { time: number }[]> = new Map();
+  // last request per series: daily sources publish late, so "behind" does not mean "new data is out"
+  private lastAttempt: Map<string, number> = new Map();
 
   constructor() {
     log("initializing market data service", Colors.WHITE);
@@ -93,7 +95,8 @@ class MarketDataService {
     let fresh: T[] = [];
     if (!lastTime) {
       fresh = await backfill();
-    } else if (now - lastTime >= 2 * step) {
+    } else if (now - lastTime >= 2 * step && now - (this.lastAttempt.get(key) ?? 0) >= step) {
+      this.lastAttempt.set(key, now);
       fresh = (await fetchSince(lastTime + step)) ?? [];
     }
 
@@ -262,17 +265,16 @@ class MarketDataService {
         ["minute", minuteDays],
         ["hour", hourDays],
       ] as [CandleTimeframe, number][]) {
-        const since = now - days * 86400;
-        const existing = await StorageService.getCandles(symbol, timeframe, since);
-        const complete =
-          existing.length > 0 &&
-          existing[0].time - since <= 86400 &&
-          !hasGap(existing, STEP_SECONDS[timeframe] * 60) &&
-          existing.every((c) => c.takerBuyBase !== undefined);
-
-        const candles = complete
-          ? ((await BinanceMarketDataService.fetchRange(symbol, timeframe, existing[existing.length - 1].time + STEP_SECONDS[timeframe])) ?? [])
-          : await BinanceMarketDataService.backfill(symbol, timeframe, days);
+        const since = now - days * DAY_SECONDS;
+        const candles = await this.refresh(
+          await StorageService.getCandles(symbol, timeframe, since),
+          since,
+          STEP_SECONDS[timeframe],
+          (from) => BinanceMarketDataService.fetchRange(symbol, timeframe, from),
+          () => BinanceMarketDataService.backfill(symbol, timeframe, days),
+          // candles saved before trade-flow fields existed are downloaded again
+          (rows) => rows.every((c) => c.takerBuyBase !== undefined)
+        );
         await StorageService.pushCandles(symbol, timeframe, candles);
       }
     }
@@ -289,17 +291,19 @@ class MarketDataService {
       await StorageService.pushSeries(pair, "funding", funding);
     }
 
-    // futures premium index: same rules as candles (re-download when incomplete)
+    // futures premium index: same rules as candles
     for (const [timeframe, days] of [
       ["minute", minuteDays],
       ["hour", hourDays],
     ] as [CandleTimeframe, number][]) {
       const since = now - days * DAY_SECONDS;
-      const existing = await StorageService.getSeries<IPremiumCandle>(pair, PREMIUM_SERIES[timeframe], since);
-      const complete = existing.length > 0 && existing[0].time - since <= DAY_SECONDS && !hasGap(existing, STEP_SECONDS[timeframe] * 60);
-      const rows = complete
-        ? ((await PremiumIndexCollector.fetchRange(pair, timeframe, existing[existing.length - 1].time + STEP_SECONDS[timeframe])) ?? [])
-        : await PremiumIndexCollector.backfill(pair, timeframe, days);
+      const rows = await this.refresh(
+        await StorageService.getSeries<IPremiumCandle>(pair, PREMIUM_SERIES[timeframe], since),
+        since,
+        STEP_SECONDS[timeframe],
+        (from) => PremiumIndexCollector.fetchRange(pair, timeframe, from),
+        () => PremiumIndexCollector.backfill(pair, timeframe, days)
+      );
       await StorageService.pushSeries(pair, PREMIUM_SERIES[timeframe], rows);
     }
 
@@ -310,6 +314,20 @@ class MarketDataService {
 
     this.cache.clear();
   };
+
+  /** Only the tail when stored rows reach back far enough without holes, otherwise the whole history. */
+  private async refresh<T extends { time: number }>(
+    existing: T[],
+    since: number,
+    step: number,
+    tail: (fromSec: number) => Promise<T[] | null>,
+    history: () => Promise<T[]>,
+    isComplete: (rows: T[]) => boolean = () => true
+  ): Promise<T[]> {
+    const complete =
+      existing.length > 0 && existing[0].time - since <= DAY_SECONDS && !hasGap(existing, step * 60) && isComplete(existing);
+    return complete ? ((await tail(existing[existing.length - 1].time + step)) ?? []) : history();
+  }
 
   public getCurrentPrice = (base: CryptoBase, to: CryptoBase): Promise<number | null> =>
     BinanceMarketDataService.getCurrentPrice(base, to);
