@@ -66,7 +66,8 @@ const cryptoConfig = {
     // main horizon: shown as predicted_value and used to judge DQN decisions
     horizonMinutes: Number(process.env.FORECAST_HORIZON_MINUTES || 15),
     // price path: return is forecast for each of these horizons; max/min and their timing within the longest one
-    horizons: parseHorizons(process.env.FORECAST_HORIZONS || "5,15,30,60,120", Number(process.env.FORECAST_HORIZON_MINUTES || 15)),
+    // (short horizons only: the bot relies on the minute price, not on guesses hours ahead)
+    horizons: parseHorizons(process.env.FORECAST_HORIZONS || "5,15", Number(process.env.FORECAST_HORIZON_MINUTES || 15)),
     windowSize: Number(process.env.FORECAST_WINDOW_SIZE || 60),
     // hourly candles seen by the forecast (48h = two daily cycles)
     hourWindowSize: Number(process.env.FORECAST_HOUR_WINDOW_SIZE || 48),
