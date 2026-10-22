@@ -8,6 +8,10 @@ const parseHorizons = (value: string, main: number): number[] =>
 
 const cryptoConfig = {
   useGPU: process.env.USE_GPU === "true" || false,
+  // Neural networks (forecast, order-book model, DQN): predictions every few minutes, daily retraining and the DQN
+  // shadow portfolio. The 50/50 rule trades without them; MODELS_ENABLED=false saves the daily training (~40 min of
+  // CPU). Market data is collected either way.
+  modelsEnabled: (process.env.MODELS_ENABLED || "true") === "true",
   // api-keys
   changeNowApiKey: process.env.CHANGE_NOW_API || "YOUR_API_KEY", // exchange currencies
 
@@ -55,6 +59,8 @@ const cryptoConfig = {
     // reference markets after the first one (BTC-USDT is always used)
     extraReferences: (process.env.FEATURE_EXTRA_REFERENCES || "true") === "true",
     premiumIndex: (process.env.FEATURE_PREMIUM_INDEX || "true") === "true",
+    // Coinbase (USD) price vs. the pair's price: strength of US demand
+    coinbasePremium: (process.env.FEATURE_COINBASE_PREMIUM || "true") === "true",
     dvol: (process.env.FEATURE_DVOL || "true") === "true",
     stablecoins: (process.env.FEATURE_STABLECOINS || "true") === "true",
     fearGreed: (process.env.FEATURE_FEAR_GREED || "true") === "true",
@@ -132,6 +138,8 @@ const cryptoConfig = {
     futuresMarketStreamUrl: process.env.COLLECTOR_FUTURES_MARKET_WS || "wss://fstream.binance.com/market/ws",
     // a stream silent for this long is treated as dead and reconnected
     silenceTimeoutSeconds: Number(process.env.COLLECTOR_SILENCE_TIMEOUT || 60),
+    // Deribit options of every recorded symbol's base coin (ETH, BTC): one snapshot per interval, for the skew
+    optionsSnapshotSeconds: Number(process.env.COLLECTOR_OPTIONS_SNAPSHOT_SECONDS || 300),
     storageDir: process.env.COLLECTOR_STORAGE_DIR || path.join(process.env.STORAGE_DIR || path.join(process.cwd(), "src/Storage"), "collectors"),
   },
 
@@ -152,6 +160,7 @@ const cryptoConfig = {
     // minute history loaded for each retraining (DQN episodes are random segments of it)
     trainingMinuteDays: Number(process.env.TRAINING_MINUTE_DAYS || 90),
     // other free sources with history
+    coinbaseApiUrl: process.env.COINBASE_API_URL || "https://api.exchange.coinbase.com",
     deribitApiUrl: process.env.DERIBIT_API_URL || "https://www.deribit.com/api/v2",
     stablecoinsUrl: process.env.STABLECOINS_URL || "https://stablecoins.llama.fi/stablecoincharts/all",
     fearGreedUrl: process.env.FEAR_GREED_URL || "https://api.alternative.me/fng/",
@@ -198,6 +207,29 @@ const cryptoConfig = {
     invalidActionPenalty: Number(process.env.RL_INVALID_ACTION_PENALTY || 0.002),
     // share of every training batch taken from real production decisions (self-correction)
     liveSampleShare: Number(process.env.RL_LIVE_SAMPLE_SHARE || 0.25),
+  },
+
+  // Trading strategy: 50/50 rebalancing (utils/rebalance.ts) — paper trading only, no real swaps. Costs per swap are
+  // the rl.feeRate + rl.gasUsd above. `yarn rebalance:backtest` on ETH 2017-08…2026-10 (2026-10-21): wider bands win
+  // because every swap costs ~1.8% (±5 → 21%/yr, ±10 → 24–25%, ±15 → 27%, ±20 → 28–29%; buy & hold 25.6%, drawdown
+  // −70…−73% vs −94%); checking every 1 h … 24 h makes no real difference. ±15 every 8 h sits in the middle of the
+  // good range (±20 relies on ~14 swaps in 9 years and lets the share drift to 70/30).
+  rebalance: {
+    target: Number(process.env.REBALANCE_TARGET || 0.5),
+    band: Number(process.env.REBALANCE_BAND || 0.15),
+    checkMinutes: Number(process.env.REBALANCE_CHECK_MINUTES || 480),
+    capitalUsd: Number(process.env.REBALANCE_CAPITAL_USD || 1000),
+    // the bot's minimal swap (~$15)
+    minTradeUsd: Number(process.env.REBALANCE_MIN_TRADE_USD || 15),
+    // stop-crane: any rule stops trading until src/Storage/trading/STOP is deleted
+    stop: {
+      minShare: Number(process.env.STOP_MIN_SHARE || 0.2),
+      maxShare: Number(process.env.STOP_MAX_SHARE || 0.8),
+      maxDrawdown: Number(process.env.STOP_MAX_DRAWDOWN || 0.4),
+      buysInARow: Number(process.env.STOP_BUYS_IN_A_ROW || 3),
+      maxTradesPerDay: Number(process.env.STOP_MAX_TRADES_PER_DAY || 2),
+      maxPriceJump: Number(process.env.STOP_MAX_PRICE_JUMP || 0.15),
+    },
   },
 };
 

@@ -23,6 +23,8 @@ export type MarketSeries =
   | "funding"
   | "premium-1m"
   | "premium-1h"
+  | "coinbase-1m"
+  | "coinbase-1h"
   | "dvol-1h"
   | "stablecoins-1d"
   | "fear-greed-1d";
@@ -35,6 +37,8 @@ const SERIES_SOURCE: Record<MarketSeries, string> = {
   funding: "binance",
   "premium-1m": "binance",
   "premium-1h": "binance",
+  "coinbase-1m": "coinbase",
+  "coinbase-1h": "coinbase",
   "dvol-1h": "deribit",
   "stablecoins-1d": "defillama",
   "fear-greed-1d": "alternative-me",
@@ -78,7 +82,10 @@ class LocalStorageService {
   private uploadFile = async (fileName: string, jsonString: string) => {
     try {
       const filePath = path.join(this.storagePath, fileName);
-      fs.writeFileSync(filePath, jsonString, "utf-8");
+      // write + rename is atomic: a process killed mid-write must not leave a cut file, because an unreadable
+      // file is replaced on the next update by only the new rows (a month of candles or all saved predictions)
+      fs.writeFileSync(`${filePath}.tmp`, jsonString, "utf-8");
+      fs.renameSync(`${filePath}.tmp`, filePath);
 
       return filePath;
     } catch (error) {

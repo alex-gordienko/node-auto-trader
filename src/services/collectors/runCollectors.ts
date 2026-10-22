@@ -6,6 +6,7 @@ import { createLogger, Colors } from "../../utils/colored-console";
 
 const log = createLogger("recorders");
 import { BinanceStreamCollector } from "./BinanceStreamCollector";
+import { DeribitOptionsRecorder } from "./DeribitOptionsRecorder";
 import { LiquidationsCollector } from "./LiquidationsCollector.service";
 import { OrderBookCollector } from "./OrderBookCollector.service";
 import { TradesCollector } from "./TradesCollector.service";
@@ -62,16 +63,18 @@ export const startCollectors = (): ICollectorsHandle | null => {
     );
   }
   collectors.push(new LiquidationsCollector());
+  const currencies = new Set(cryptoConfig.collectors.symbols.map((symbol) => symbol.split("-")[0]));
+  const recorders = [...collectors, ...Array.from(currencies, (currency) => new DeribitOptionsRecorder(currency))];
 
   log(
-    `Recording ${collectors.map((c) => c.name).join(", ")} to ${cryptoConfig.collectors.storageDir}`,
+    `Recording ${recorders.map((c) => c.name).join(", ")} to ${cryptoConfig.collectors.storageDir}`,
     Colors.GREEN
   );
-  collectors.forEach((c) => c.start());
+  recorders.forEach((c) => c.start());
 
   const previousRows = new Map<string, number>();
   const statusTimer = setInterval(() => {
-    const status = collectors.map((c) => {
+    const status = recorders.map((c) => {
       const added = c.rows - (previousRows.get(c.name) ?? 0);
       previousRows.set(c.name, c.rows);
       return `${c.name} +${added}${c.reconnects ? ` (${c.reconnects} reconnects)` : ""}`;
@@ -83,7 +86,7 @@ export const startCollectors = (): ICollectorsHandle | null => {
     collectors,
     stop: async () => {
       clearInterval(statusTimer);
-      await Promise.all(collectors.map((c) => c.stop()));
+      await Promise.all(recorders.map((c) => c.stop()));
       if (fs.existsSync(lockPath) && fs.readFileSync(lockPath, "utf-8") === String(process.pid)) {
         fs.unlinkSync(lockPath);
       }

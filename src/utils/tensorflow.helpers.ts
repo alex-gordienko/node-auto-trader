@@ -14,9 +14,10 @@ import {
 
 // returns are forecast as log-returns in percent, so the loss is not vanishingly small
 export const FORECAST_TARGET_SCALE = 100;
-// per candle: market + order flow features, then features against each reference market (BTC, ...)
+// per candle: market + order flow features, then features against each reference market (BTC, ...),
+// futures premium and Coinbase premium
 export const CANDLE_FEATURE_COUNT =
-  MARKET_FEATURE_COUNT + REFERENCE_FEATURE_COUNT * cryptoConfig.marketData.referencePairs.length + PREMIUM_FEATURE_COUNT;
+  MARKET_FEATURE_COUNT + REFERENCE_FEATURE_COUNT * cryptoConfig.marketData.referencePairs.length + 2 * PREMIUM_FEATURE_COUNT;
 // time features: hour-of-day and day-of-week as sin/cos pairs
 export const TIME_FEATURE_COUNT = 4;
 // futures: availability flag, open interest change 1h / 24h, three long/short ratios, taker buy/sell ratio, funding
@@ -257,12 +258,17 @@ const stdOf = (slice: number[]) => {
   return Math.sqrt(slice.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(slice.length - 1, 1));
 };
 
-export const buildHourlyContext = (hourly: IOHLCV[], references: IOHLCV[][], premium: IPremiumPoint[] = []): IHourlyContext => {
+export const buildHourlyContext = (
+  hourly: IOHLCV[],
+  references: IOHLCV[][],
+  premium: IPremiumPoint[] = [],
+  coinbase: IOHLCV[] = []
+): IHourlyContext => {
   const closes = hourly.map((c) => c.close);
   const returns = closes.map((c, i) => (i > 0 && closes[i - 1] > 0 ? Math.log(c / closes[i - 1]) : 0));
   return {
     times: hourly.map((c) => c.time),
-    features: buildCandleFeatures(hourly, references, 3600, premium),
+    features: buildCandleFeatures(hourly, references, 3600, premium, coinbase),
     candles: hourly,
     stats: {
       sma168: sma(closes, 168),

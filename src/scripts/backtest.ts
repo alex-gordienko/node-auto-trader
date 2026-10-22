@@ -81,6 +81,7 @@ const cut = (d: IMarketDataset, until: number, from = 0): IMarketDataset => {
     futures: keep(d.futures),
     funding: keep(d.funding),
     premium: { minute: keep(d.premium.minute), hour: keep(d.premium.hour) },
+    coinbase: { minute: keep(d.coinbase.minute), hour: keep(d.coinbase.hour) },
     dvol: keep(d.dvol),
     stablecoins: keep(d.stablecoins),
     fearGreed: keep(d.fearGreed),

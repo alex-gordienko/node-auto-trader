@@ -34,7 +34,7 @@ const iso = (ms: number) => new Date(ms).toISOString().replace("T", " ").slice(0
       let rows = 0;
       let first = Infinity;
       let last = 0;
-      for await (const row of readStream<unknown[]>(name)) {
+      for (const row of readStream<unknown[]>(name)) {
         rows++;
         const time = row[0] as number;
         first = Math.min(first, time);

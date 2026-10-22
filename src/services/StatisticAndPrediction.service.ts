@@ -1,20 +1,16 @@
 import MarketDataService from "./collectors/MarketData.service";
-import CryptoExchangeService from "./CryptoExchange.service";
 // import DigitalOceanStorageService from "./DigitalOcean.storage.service";
 import DigitalOceanStorageService from "./Local.storage.service";
 import EtheriumWalletService from "./EtheriumWallet.service";
-import WavesWalletService from "./WavesWallet.service";
 import TensorflowService from "./Tensorflow.service";
+import RebalanceService from "./Rebalance.service";
 
 import cryptoConfig from "../config/crypto.config";
 import { Colors, log } from "../utils/colored-console";
 import repeatEvent from "../utils/timer";
-import { CryptoBase, CryptoExchangeCoins, CryptoPairs } from "../types/basic.types";
+import { CryptoBase, CryptoPairs } from "../types/basic.types";
 import { ICryproExchangeWalletHistory } from "../types/cryptoExchange.types";
 import { IMarketDataset } from "../types/marketData.types";
-
-// the bot's minimal swap (~$15): smaller ETH balances count as "not in position"
-const MIN_SWAP_USD = 15;
 
 class StatisticAndPredictionService {
   // models are retrained on copies and swapped in when ready, so trading never pauses; this only
@@ -31,17 +27,20 @@ class StatisticAndPredictionService {
 
   private walletETHtimer: NodeJS.Timeout | null = null;
 
-  // when the DQN last made a trading decision, per pair: trades happen at most once per rl.decisionMinutes
-  private lastDecisionAt: Map<CryptoPairs, number> = new Map();
+  // timer of the 50/50 strategy (paper trading)
+  private rebalanceTimer: NodeJS.Timeout | null = null;
 
   constructor() {
-    this.autoRetrainModels();
     this.autoUpdateDatasets();
-
-    this.autoTrade();
-
+    this.autoRebalance();
     this.autoLogWalletBalances();
 
+    if (!cryptoConfig.modelsEnabled) {
+      log(`[**] Neural networks are off (MODELS_ENABLED=false): no predictions or retraining, market data is still collected`, Colors.YELLOW);
+      return;
+    }
+    this.autoRetrainModels();
+    this.autoTrade();
     this.trainIfNoModels();
   }
 
@@ -70,6 +69,9 @@ class StatisticAndPredictionService {
     if (this.walletETHtimer) {
       clearInterval(this.walletETHtimer);
     }
+    if (this.rebalanceTimer) {
+      clearInterval(this.rebalanceTimer);
+    }
   };
 
   private autoUpdateDatasets = async () => {
@@ -81,13 +83,17 @@ class StatisticAndPredictionService {
       Colors.WHITE
     );
 
+    // only the rows missing since the last update are requested (with the models on, autoTrade does it every few minutes)
+    const sync = async () => {
+      for (const pair of Object.values(CryptoPairs)) {
+        await MarketDataService.syncAll(pair);
+      }
+    };
+    const safeSync = () => sync().catch((error) => log(`[**] Dataset update failed: ${error}`, Colors.RED));
+    // without the models nothing else updates the datasets: once at start too, so short runs keep the history whole
+    if (!cryptoConfig.modelsEnabled) safeSync();
     this.historyMinutePairTimer = repeatEvent({
-      callback: async () => {
-        // usually a no-op or a tiny request: autoTrade keeps the datasets up to date incrementally
-        for (const pair of Object.values(CryptoPairs)) {
-          await MarketDataService.syncAll(pair);
-        }
-      },
+      callback: safeSync,
       units: unitsForMinutes,
       interval: intervalForMinutes,
     });
@@ -155,90 +161,27 @@ class StatisticAndPredictionService {
           datasets.set(pair, dataset);
         }
 
-        // the DQN decides from what the bot actually holds: ETH worth more than the minimal swap = in position
-        const positions = new Map<CryptoPairs, { position: number; entryPrice: number }>();
-        const ethBalance = await EtheriumWalletService.getBalance();
-        for (const [pair, dataset] of datasets) {
-          const price = dataset.minute[dataset.minute.length - 1]?.close ?? 0;
-          positions.set(pair, { position: ethBalance * price >= MIN_SWAP_USD ? 1 : 0, entryPrice: 0 });
-        }
+        // the DQN decides from the position of its shadow paper portfolio (see Rebalance.service)
+        const predictionByMinute = await TensorflowService.predictNextPrices(datasets, RebalanceService.dqnPositions());
 
-        const predictionByMinute = await TensorflowService.predictNextPrices(datasets, positions);
-
-        for (const predictionMap of predictionByMinute) {
-          const [pair, prediction] = predictionMap;
-
+        for (const [pair, prediction] of predictionByMinute) {
           await DigitalOceanStorageService.pushTensorflowPredictionHistory(pair, prediction);
-
-          // making swipe due to prediction (THE MOST IMPORTANT PART)
-          if (cryptoConfig.environment === "production") {
-            const currentPrice = prediction.current_value;
-            const predictedPrice = prediction.predicted_value;
-
-            await this.possibleProfit(prediction.predicted_command, currentPrice, predictedPrice, prediction.q_values);
-
-            const ETHBalance = await EtheriumWalletService.getBalance();
-            const position = prediction.position ?? 0;
-            const sinceDecision = Date.now() - (this.lastDecisionAt.get(pair) ?? 0);
-
-            if (!TensorflowService.isTrained(pair)) {
-              log(`[**] ${pair}: no trained model yet, not trading`, Colors.YELLOW);
-              continue;
-            } else if (sinceDecision < cryptoConfig.rl.decisionMinutes * 60 * 1000 - 30 * 1000) {
-              // predictions are saved every run for self-correction, but trades follow the DQN's training cadence
-              log(
-                `[**] Next trading decision in ${Math.ceil((cryptoConfig.rl.decisionMinutes * 60 * 1000 - sinceDecision) / 60000)} min`,
-                Colors.YELLOW
-              );
-              continue;
-            }
-
-            this.lastDecisionAt.set(pair, Date.now());
-
-            if (prediction.predicted_command === "Buy") {
-              // buy only when not holding ETH yet (the USDT balance is checked by the exchange)
-              if (position === 0) {
-                log(`[**] Buying ETH by USDT`, Colors.GREEN);
-                const transaction = await CryptoExchangeService.swapCoins(CryptoBase.USDT, CryptoBase.ETH);
-
-                if (transaction) {
-                  await DigitalOceanStorageService.pushTransactionsHistory({
-                    from: CryptoBase.USDT,
-                    to: CryptoBase.ETH,
-                    coins: [CryptoBase.ETH, CryptoBase.USDT],
-                    exchangeAPIResponse: transaction.exchangeAPIresponse,
-                    transactionResponse: transaction.ethTransaction,
-                  });
-                }
-              } else {
-                log(`[**] Already holding ETH (${ETHBalance}), nothing to buy`, Colors.YELLOW);
-              }
-            } else if (prediction.predicted_command === "Sell") {
-              if (position === 1) {
-                log(`[**] Selling ETH for USDT`, Colors.GREEN);
-                const transaction = await CryptoExchangeService.swapCoins(CryptoBase.ETH, CryptoBase.USDT);
-
-                if (transaction) {
-                  await DigitalOceanStorageService.pushTransactionsHistory({
-                    from: CryptoBase.ETH,
-                    to: CryptoBase.USDT,
-                    coins: [CryptoBase.ETH, CryptoBase.USDT],
-                    exchangeAPIResponse: transaction.exchangeAPIresponse,
-                    transactionResponse: transaction.ethTransaction,
-                  });
-                }
-              } else {
-                log(`[**] Cannot sell ETH, because ETH amount is too low (${ETHBalance})`, Colors.RED);
-              }
-            } else {
-              log(`[**] No action`, Colors.YELLOW);
-            }
-          }
+          // the 50/50 rule trades; the DQN only moves its shadow portfolio, to compare the two on live data
+          if (TensorflowService.isTrained(pair)) RebalanceService.followDqn(pair, prediction.predicted_command, prediction.current_value);
         }
       },
       units,
       interval,
     });
+  };
+
+  /** 50/50 rebalancing on paper: checked at start and every rebalance.checkMinutes; errors never stop the server. */
+  private autoRebalance = () => {
+    const { checkMinutes, band } = cryptoConfig.rebalance;
+    log(`[**] 50/50 strategy (paper): ETH share checked every ${checkMinutes} min, rebalanced outside 50% ± ${band * 100}%`, Colors.CYAN);
+    const check = () => RebalanceService.check().catch((error) => log(`[**] Rebalance check failed: ${error}`, Colors.RED));
+    check();
+    this.rebalanceTimer = repeatEvent({ callback: check, units: "minutes", interval: checkMinutes });
   };
 
   private autoLogWalletBalances = async () => {
@@ -310,37 +253,6 @@ class StatisticAndPredictionService {
     } catch (error) {
       log("Error while calculating wallet statistics", Colors.RED);
       log(error, Colors.RED);
-    }
-  };
-
-  private possibleProfit = async (
-    action: string,
-    currentPrice: number,
-    predictedPrice: number,
-    qValues?: { hold: number; buy: number; sell: number }
-  ) => {
-    // prices are in USDT already, no extra API calls needed
-    // Calculate possible profit for Buy action
-    if (action === "Buy") {
-      const amountToBuy = await CryptoExchangeService.minimalExchangeAmount(CryptoBase.USDT, CryptoBase.ETH);
-
-      const potentialProfit = (predictedPrice - currentPrice) * amountToBuy;
-      log(`[**] Potential profit from buying ETH: ~$${potentialProfit.toFixed(4)}`, Colors.GREEN);
-    }
-
-    // Calculate possible profit for Sell action
-    if (action === "Sell") {
-      const amountToSell = await CryptoExchangeService.minimalExchangeAmount(CryptoBase.ETH, CryptoBase.USDT);
-
-      const potentialProfit = (currentPrice - predictedPrice) * amountToSell;
-      log(`[**] Potential profit from selling ETH: ~$${potentialProfit.toFixed(4)}`, Colors.GREEN);
-    }
-
-    if (qValues) {
-      log(
-        `[**] DQN Q-values hold=${qValues.hold.toFixed(5)} buy=${qValues.buy.toFixed(5)} sell=${qValues.sell.toFixed(5)}`,
-        Colors.CYAN
-      );
     }
   };
 }

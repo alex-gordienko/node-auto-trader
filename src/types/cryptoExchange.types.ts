@@ -66,6 +66,8 @@ export interface ITensorflowPrediction {
   forecast_raw?: number[];
   forecast_path?: IForecastPath;
   forecast_reliable?: boolean;
+  // order-book model's verdict at the decision, one value per ORDERFLOW_HORIZONS_SECONDS (0 where not reliable)
+  orderflow_verdict?: number[];
   // position the DQN decided from: 1 = holding ETH, 0 = holding USDT
   position?: number;
   q_values?: {

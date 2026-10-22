@@ -6,7 +6,7 @@ import { format } from "date-fns";
 import cryptoConfig from "../config/crypto.config";
 
 import { IMarketDataset } from "../types/marketData.types";
-import { log, Colors, getRandomEnumValue } from "../utils/colored-console";
+import { log, Colors } from "../utils/colored-console";
 import { IForecastPath, ITensorflowPrediction } from "../types/cryptoExchange.types";
 import { CryptoPairs } from "../types/basic.types";
 import { buildCandleFeatures, INDICATOR_WARMUP, IOHLCV } from "../utils/technical-indicators";
@@ -53,6 +53,7 @@ import {
 } from "./rl/trading-env";
 import { ITransition, ReplayBuffer } from "./rl/replay-buffer";
 import OrderFlowService, { IOrderFlowBundle } from "./OrderFlow.service";
+import { ORDERFLOW_HORIZONS_SECONDS } from "../utils/orderflow.features";
 
 const tf: typeof tfType = cryptoConfig.useGPU ? require("@tensorflow/tfjs-node-gpu") : require("@tensorflow/tfjs-node");
 
@@ -372,7 +373,8 @@ class TensorflowAI {
     for (let start = 0; start < inputs.length; start += 2048) {
       const chunk = inputs.slice(start, start + 2048);
       const xs = this.forecastTensors(chunk, scaler);
-      const out = tf.tidy(() => (model.predict(xs) as tfType.Tensor).arraySync() as number[][]);
+      // tfjs predicts in batches of 32 by default: 10× slower here (5.6 s vs 0.55 s per chunk), same outputs
+      const out = tf.tidy(() => (model.predict(xs, { batchSize: chunk.length }) as tfType.Tensor).arraySync() as number[][]);
       tf.dispose(xs);
       out.forEach((row) => result.push(row.map((v, j) => v * targetStd[j] + targetMean[j])));
     }
@@ -688,8 +690,9 @@ class TensorflowAI {
     const shape: [number, number, number] = [batch.length, this.dqnTimeSteps, DQN_FEATURE_COUNT];
 
     const [qValues, nextQValues] = tf.tidy(() => {
-      const q = (model.predict(tf.tensor3d(states, shape)) as tfType.Tensor).arraySync() as number[][];
-      const nq = (target.predict(tf.tensor3d(nextStates, shape)) as tfType.Tensor).arraySync() as number[][];
+      // the whole batch at once (tfjs would split it into batches of 32)
+      const q = (model.predict(tf.tensor3d(states, shape), { batchSize: batch.length }) as tfType.Tensor).arraySync() as number[][];
+      const nq = (target.predict(tf.tensor3d(nextStates, shape), { batchSize: batch.length }) as tfType.Tensor).arraySync() as number[][];
       return [q, nq] as [number[][], number[][]];
     });
 
@@ -962,6 +965,7 @@ class TensorflowAI {
     const enabled = cryptoConfig.features;
     const useReference = (i: number) => i === 0 || enabled.extraReferences;
     const premium = enabled.premiumIndex ? dataset.premium : { minute: [], hour: [] };
+    const coinbase = enabled.coinbasePremium ? dataset.coinbase : { minute: [], hour: [] };
     const context: IMarketContext = {
       futures: buildFuturesContext(dataset.futures, dataset.funding),
       external: buildExternalContext(dataset.dvol, dataset.stablecoins, dataset.fearGreed),
@@ -972,12 +976,14 @@ class TensorflowAI {
         candles,
         references.map((r, i) => (useReference(i) ? toOHLCV(r.minute) : [])),
         60,
-        premium.minute
+        premium.minute,
+        toOHLCV(coinbase.minute)
       ),
       hourly: buildHourlyContext(
         toOHLCV(dataset.hour),
         references.map((r, i) => (useReference(i) ? toOHLCV(r.hour) : [])),
-        premium.hour
+        premium.hour,
+        toOHLCV(coinbase.hour)
       ),
       context,
     };
@@ -1059,6 +1065,7 @@ class TensorflowAI {
         newOrderFlow ?? OrderFlowService.liveBundle(pair)
       )
     );
+    OrderFlowService.releaseHistory(pair);
 
     const policy = this.createDQNmodel();
     const target = this.createDQNmodel();
@@ -1148,17 +1155,15 @@ class TensorflowAI {
         const predictedReturn = reliable && main ? main.return : 0;
 
         const { position, entryPrice } = positions.get(pair) ?? { position: 0, entryPrice: 0 };
+        const verdicts = OrderFlowService.verdicts(
+          pair,
+          candles.map((c) => c.time),
+          "live"
+        );
         const state = buildInferenceState(
           candles,
           this.dqnFeatures(pair, features),
-          this.withVerdicts(
-            this.dqnForecastFeature(pair, rawSeries),
-            OrderFlowService.verdicts(
-              pair,
-              candles.map((c) => c.time),
-              "live"
-            )
-          ),
+          this.withVerdicts(this.dqnForecastFeature(pair, rawSeries), verdicts),
           this.dqnTimeSteps,
           position,
           entryPrice
@@ -1177,6 +1182,7 @@ class TensorflowAI {
           forecast_raw: raw ?? undefined,
           forecast_path: path,
           forecast_reliable: reliable,
+          orderflow_verdict: verdicts[verdicts.length - 1],
           position,
           predicted_command: RL_ACTION_LABELS[action],
           q_values: { hold, buy, sell },
@@ -1187,25 +1193,33 @@ class TensorflowAI {
     }
 
     results.forEach((result) => {
-      const now = format(new Date(result.timestamp), "dd/MM/yy HH:mm");
-      const horizon = format(new Date(result.lstm_timestamp), "dd/MM/yy HH:mm");
-      const q = result.q_values;
-      const ret = ((result.predicted_return ?? 0) * 100).toFixed(3);
-      const reliability = result.forecast_reliable ? "" : " (forecast unreliable)";
+      const time = format(new Date(result.timestamp), "dd/MM/yy HH:mm");
+      const price = result.current_value;
       const p = result.forecast_path;
-      const pct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(3)}%`;
-      const mark = (ok: boolean) => (ok ? "" : "?");
-      const pathText = p
-        ? ` | path ${p.horizons.map((h) => `${h.minutes}m ${pct(h.return)}${mark(h.reliable)}`).join(", ")}` +
-          ` | best sell ${pct(p.max.return)}${mark(p.max.reliable)} in ~${p.max.inMinutes}m${mark(p.max.timeReliable)}` +
-          `, best buy ${pct(p.min.return)}${mark(p.min.reliable)} in ~${p.min.inMinutes}m${mark(p.min.timeReliable)}`
-        : "";
-      const qText = q ? ` Q[H=${q.hold.toFixed(4)} B=${q.buy.toFixed(4)} S=${q.sell.toFixed(4)}]` : "";
+      const pct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
+      // the forecast knows how far the price may move, not where: the range is shown, a direction only once proven
+      const range =
+        p && p.max.reliable && p.min.reliable
+          ? `next ${FORECAST_LAYOUT.pathMinutes} min: ${(price * (1 + p.min.return)).toFixed(2)} … ${(price * (1 + p.max.return)).toFixed(2)} ` +
+            `(${pct(p.min.return)} … ${pct(p.max.return)})` +
+            (p.max.timeReliable ? `, top in ~${p.max.inMinutes} min` : "") +
+            (p.min.timeReliable ? `, bottom in ~${p.min.inMinutes} min` : "")
+          : "price range: not reliable yet";
+      const proven = p?.horizons.filter((h) => h.reliable) ?? [];
+      const direction = proven.length
+        ? `direction ${proven.map((h) => `${h.minutes}m ${pct(h.return)}`).join(", ")}`
+        : "direction: no signal (50/50)";
+      // verdict in typical moves of each horizon: +1 = up by a usual move
+      const book = ORDERFLOW_HORIZONS_SECONDS.map((seconds, j) => ({ seconds, v: result.orderflow_verdict?.[j] ?? 0 })).filter((b) => b.v !== 0);
+      const bookText = book.length
+        ? `order book: ${book.map((b) => `next ${b.seconds}s ${b.v > 0 ? "up" : "down"} ${Math.abs(b.v).toFixed(2)}`).join(", ")}`
+        : "order book: no reliable signal";
+      const q = result.q_values;
+      const dqn =
+        `DQN: ${result.predicted_command} (holds ${result.position ? "ETH" : "USDT"})` +
+        (q ? `, Q hold ${q.hold.toFixed(3)} buy ${q.buy.toFixed(3)} sell ${q.sell.toFixed(3)}` : "");
 
-      log(
-        `[**] ${now} ${result.pair} Current: ${result.current_value}. DQN: ${result.predicted_command}. Forecast ~${result.predicted_value.toFixed(4)} (${ret}%) at ${horizon}${reliability}${qText}${pathText}`,
-        getRandomEnumValue(Colors)
-      );
+      log(`[**] ${time} ${result.pair} ${price} | ${range} | ${direction} | ${bookText} | ${dqn}`, Colors.CYAN);
     });
 
     return results;

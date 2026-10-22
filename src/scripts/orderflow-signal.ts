@@ -45,7 +45,7 @@ const imbalance = (bids: Level[], asks: Level[], levels: number) => {
 /** Per-second order book state (last snapshot of the second), by event time when the stream has one. */
 const readBooks = async (stream: string): Promise<Map<number, IBook>> => {
   const books = new Map<number, IBook>();
-  for await (const [receivedAt, eventTime, bids, asks] of readStream<DepthRow>(stream)) {
+  for (const [receivedAt, eventTime, bids, asks] of readStream<DepthRow>(stream)) {
     if (!bids.length || !asks.length) continue;
     const [bidPrice, bidQty] = bids[0];
     const [askPrice, askQty] = asks[0];
@@ -66,7 +66,7 @@ const readBooks = async (stream: string): Promise<Map<number, IBook>> => {
 /** Per-second aggressive buy and sell volume. */
 const readTrades = async (stream: string): Promise<Map<number, { buy: number; sell: number }>> => {
   const seconds = new Map<number, { buy: number; sell: number }>();
-  for await (const [time, , qty, buyerIsMaker] of readStream<TradeRow>(stream)) {
+  for (const [time, , qty, buyerIsMaker] of readStream<TradeRow>(stream)) {
     const second = Math.floor(time / 1000);
     const bucket = seconds.get(second) ?? { buy: 0, sell: 0 };
     // buyer is maker = the seller hit the bid (aggressive sell)
@@ -80,7 +80,7 @@ const readTrades = async (stream: string): Promise<Map<number, { buy: number; se
 /** Per-second liquidated USD: ETH longs (side SELL), ETH shorts (side BUY), and the whole market. */
 const readLiquidations = async () => {
   const seconds = new Map<number, { ethLong: number; ethShort: number; all: number }>();
-  for await (const [time, symbol, side, , avgPrice, qty] of readStream<LiquidationRow>("ALL/futures-liquidations")) {
+  for (const [time, symbol, side, , avgPrice, qty] of readStream<LiquidationRow>("ALL/futures-liquidations")) {
     const second = Math.floor(time / 1000);
     const bucket = seconds.get(second) ?? { ethLong: 0, ethShort: 0, all: 0 };
     const usd = avgPrice * qty;

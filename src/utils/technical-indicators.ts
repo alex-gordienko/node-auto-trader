@@ -297,18 +297,38 @@ export const buildPremiumFeatures = (candles: IOHLCV[], premium: IPremiumPoint[]
 };
 
 /**
- * Market features, then features against every reference market, then the futures premium.
- * An empty reference or premium series gives zeros (missing data or a feature group switched off).
+ * Coinbase premium per candle: Coinbase USD close / own close − 1. The Coinbase bar of the same time, or the one
+ * before it when it is not published yet (live), so training and live see the latest known value.
+ */
+export const coinbasePremium = (candles: IOHLCV[], coinbase: IOHLCV[], step: number): IPremiumPoint[] => {
+  const byTime = new Map<number, number>();
+  coinbase.forEach((c) => byTime.set(c.time, c.close));
+  const points: IPremiumPoint[] = [];
+  for (const candle of candles) {
+    const usd = byTime.get(candle.time) ?? byTime.get(candle.time - step);
+    if (usd && candle.close > 0) points.push({ time: candle.time, close: usd / candle.close - 1 });
+  }
+  return points;
+};
+
+/**
+ * Market features, then features against every reference market, then the futures premium and the Coinbase premium.
+ * An empty reference, premium or Coinbase series gives zeros (missing data or a feature group switched off).
  */
 export const buildCandleFeatures = (
   candles: IOHLCV[],
   references: IOHLCV[][],
   step: number,
-  premium: IPremiumPoint[] = []
+  premium: IPremiumPoint[] = [],
+  coinbase: IOHLCV[] = []
 ): number[][] => {
   const market = buildMarketFeatures(candles);
   const relative = references.map((reference) => buildReferenceFeatures(candles, reference, step));
   // average over the last hour of minute bars, or the last day of hourly bars
-  const premiumRows = buildPremiumFeatures(candles, premium, step === 60 ? 60 : 24);
-  return market.map((row, i) => relative.reduce((acc, ref) => acc.concat(ref[i]), row).concat(premiumRows[i]));
+  const window = step === 60 ? 60 : 24;
+  const premiumRows = buildPremiumFeatures(candles, premium, window);
+  const coinbaseRows = buildPremiumFeatures(candles, coinbasePremium(candles, coinbase, step), window);
+  return market.map((row, i) =>
+    relative.reduce((acc, ref) => acc.concat(ref[i]), row).concat(premiumRows[i], coinbaseRows[i])
+  );
 };

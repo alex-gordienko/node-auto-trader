@@ -71,6 +71,7 @@ export interface IMarketDataset extends ICandleSeries {
   futures: IFuturesMetrics[];
   funding: IFundingRate[];
   premium: IPremiumSeries;
+  coinbase: ICandleSeries; // the base coin in USD on Coinbase (ETH-USD), for the Coinbase premium
   dvol: ISeriesPoint[]; // ETH implied volatility index (Deribit), hourly close
   stablecoins: ISeriesPoint[]; // total USD stablecoin supply (DefiLlama), daily
   fearGreed: ISeriesPoint[]; // crypto fear & greed index 0–100 (alternative.me), daily

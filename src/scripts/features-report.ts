@@ -20,10 +20,11 @@ const log = createLogger("features-report");
 const PAIR = CryptoPairs.ETH_USDT;
 
 type FeatureGroup = keyof typeof cryptoConfig.features;
-const GROUPS: FeatureGroup[] = ["extraReferences", "premiumIndex", "dvol", "stablecoins", "fearGreed", "regime"];
+const GROUPS: FeatureGroup[] = ["extraReferences", "premiumIndex", "coinbasePremium", "dvol", "stablecoins", "fearGreed", "regime"];
 const LABELS: Record<FeatureGroup, string> = {
   extraReferences: "other coins",
   premiumIndex: "futures premium",
+  coinbasePremium: "Coinbase premium",
   dvol: "DVOL",
   stablecoins: "stablecoins",
   fearGreed: "fear & greed",

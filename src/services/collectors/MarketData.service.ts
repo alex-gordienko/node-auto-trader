@@ -1,4 +1,5 @@
 import BinanceMarketDataService from "./BinanceMarketData.service";
+import CoinbaseCollector from "./CoinbaseCollector.service";
 import DvolCollector from "./DvolCollector.service";
 import FearGreedCollector from "./FearGreedCollector.service";
 import PremiumIndexCollector from "./PremiumIndexCollector.service";
@@ -26,6 +27,7 @@ const log = createLogger("market-data");
 const STEP_SECONDS: Record<CandleTimeframe, number> = { minute: 60, hour: 3600 };
 const CANDLE_SERIES: Record<CandleTimeframe, MarketSeries> = { minute: "1m", hour: "1h" };
 const PREMIUM_SERIES: Record<CandleTimeframe, MarketSeries> = { minute: "premium-1m", hour: "premium-1h" };
+const COINBASE_SERIES: Record<CandleTimeframe, MarketSeries> = { minute: "coinbase-1m", hour: "coinbase-1h" };
 // market-wide series (stablecoins, fear & greed) are stored under this name instead of a pair
 const MARKET = "MARKET";
 const DAY_SECONDS = 86400;
@@ -44,6 +46,8 @@ const MEMORY_KEEP_SECONDS: Record<MarketSeries, number> = {
   funding: 7 * 86400,
   "premium-1m": 2 * 86400,
   "premium-1h": 30 * 86400,
+  "coinbase-1m": 2 * 86400,
+  "coinbase-1h": 30 * 86400,
   "dvol-1h": 3 * 86400, // 24h change
   "stablecoins-1d": 40 * 86400, // 30-day change, published with a delay
   "fear-greed-1d": 10 * 86400, // 7-day change
@@ -53,7 +57,7 @@ const MEMORY_KEEP_SECONDS: Record<MarketSeries, number> = {
  * Single entry point for market data collected over REST: keeps every dataset up to date incrementally
  * (only missing rows are requested, each request asks for the maximum page size) and assembles datasets
  * for training and inference. Sources: Binance (candles, futures metrics, funding, premium index),
- * Deribit (DVOL), DefiLlama (stablecoin supply), alternative.me (fear & greed).
+ * Coinbase (USD candles), Deribit (DVOL), DefiLlama (stablecoin supply), alternative.me (fear & greed).
  */
 class MarketDataService {
   private cache: Map<string, { time: number }[]> = new Map();
@@ -158,6 +162,18 @@ class MarketDataService {
     );
   };
 
+  /** Candles of the pair's base coin in USD on Coinbase, at the pair's own times. */
+  public syncCoinbase = (pair: MarketSymbol, timeframe: CandleTimeframe): Promise<IMarketCandle[]> => {
+    const { backfillMinuteDays, backfillHourDays } = cryptoConfig.marketData;
+    return this.syncSeries<IMarketCandle>(
+      pair,
+      COINBASE_SERIES[timeframe],
+      STEP_SECONDS[timeframe],
+      (from) => CoinbaseCollector.fetchRange(pair, timeframe, from),
+      () => CoinbaseCollector.backfill(pair, timeframe, timeframe === "hour" ? backfillHourDays : backfillMinuteDays)
+    );
+  };
+
   /** Hourly DVOL of the pair's base currency (ETH for ETH-USDT). */
   public syncDvol = (pair: MarketSymbol): Promise<ISeriesPoint[]> => {
     const currency = pair.split("-")[0];
@@ -216,6 +232,7 @@ class MarketDataService {
       futures: await this.syncFuturesMetrics(pair),
       funding: await this.syncFunding(pair),
       premium: await this.syncPremiumSeries(pair),
+      coinbase: { minute: await this.syncCoinbase(pair, "minute"), hour: await this.syncCoinbase(pair, "hour") },
       dvol: await this.syncDvol(pair),
       stablecoins: await this.syncStablecoins(),
       fearGreed: await this.syncFearGreed(),
@@ -246,6 +263,10 @@ class MarketDataService {
       premium: {
         minute: await StorageService.getSeries<IPremiumCandle>(pair, "premium-1m", since),
         hour: await StorageService.getSeries<IPremiumCandle>(pair, "premium-1h"),
+      },
+      coinbase: {
+        minute: await StorageService.getSeries<IMarketCandle>(pair, "coinbase-1m", since),
+        hour: await StorageService.getSeries<IMarketCandle>(pair, "coinbase-1h"),
       },
       dvol: await StorageService.getSeries<ISeriesPoint>(pair, "dvol-1h"),
       stablecoins: await StorageService.getSeries<ISeriesPoint>(MARKET, "stablecoins-1d"),
@@ -291,7 +312,7 @@ class MarketDataService {
       await StorageService.pushSeries(pair, "funding", funding);
     }
 
-    // futures premium index: same rules as candles
+    // futures premium index and Coinbase candles: same rules as candles
     for (const [timeframe, days] of [
       ["minute", minuteDays],
       ["hour", hourDays],
@@ -305,6 +326,15 @@ class MarketDataService {
         () => PremiumIndexCollector.backfill(pair, timeframe, days)
       );
       await StorageService.pushSeries(pair, PREMIUM_SERIES[timeframe], rows);
+
+      const coinbase = await this.refresh(
+        await StorageService.getSeries<IMarketCandle>(pair, COINBASE_SERIES[timeframe], since),
+        since,
+        STEP_SECONDS[timeframe],
+        (from) => CoinbaseCollector.fetchRange(pair, timeframe, from),
+        () => CoinbaseCollector.backfill(pair, timeframe, days)
+      );
+      await StorageService.pushSeries(pair, COINBASE_SERIES[timeframe], coinbase);
     }
 
     const dvol = (await DvolCollector.fetchSince(pair.split("-")[0], now - hourDays * DAY_SECONDS)) ?? [];

@@ -120,10 +120,11 @@ class OrderFlowService {
     let missing = 0;
     for (let s = end - this.window + 1; s <= end; s++) {
       const v = vectorAt(s);
-      if (!v) missing++;
+      // most candles of the DQN's 90 days lie before recording started: stop as soon as the window is unusable
+      if (!v && ++missing > MAX_MISSING_SECONDS) return null;
       rows.push(v ?? new Array(ORDERFLOW_SECOND_FEATURES).fill(0));
     }
-    return missing > MAX_MISSING_SECONDS ? null : rows;
+    return rows;
   }
 
   private toTensor(windows: number[][][], mean: number[], std: number[]): tfType.Tensor3D {
@@ -144,7 +145,8 @@ class OrderFlowService {
     const { featureMean, featureStd, targetStd, calibration } = bundle.metrics;
     for (let start = 0; start < windows.length; start += 2048) {
       const x = this.toTensor(windows.slice(start, start + 2048), featureMean, featureStd);
-      const out = tf.tidy(() => (bundle.model.predict(x) as tfType.Tensor).arraySync() as number[][]);
+      // tfjs predicts in batches of 32 by default, which is many times slower
+      const out = tf.tidy(() => (bundle.model.predict(x, { batchSize: 2048 }) as tfType.Tensor).arraySync() as number[][]);
       x.dispose();
       out.forEach((row) => result.push(row.map((v, j) => calibration[j].a + calibration[j].b * v * targetStd[j])));
     }
@@ -154,15 +156,15 @@ class OrderFlowService {
   // ---------- training ----------
 
   /** Recorded order-book history of the pair for the last `trainingDays`. */
-  private async loadHistory(pair: CryptoPairs): Promise<OrderFlowSeconds> {
+  private loadHistory(pair: CryptoPairs): OrderFlowSeconds {
     const from = Date.now() - cryptoConfig.orderFlow.trainingDays * 86400_000;
     log(`${pair}: reading recorded order books, trades and liquidations`, Colors.CYAN);
     const flow = new OrderFlowSeconds(pair.replace("-", ""));
-    for await (const row of readStream<DepthRow>(`${pair}/futures-depth`, from)) flow.addBook("futures", row);
-    for await (const row of readStream<DepthRow>(`${pair}/spot-depth`, from)) flow.addBook("spot", row);
-    for await (const row of readStream<TradeRow>(`${pair}/futures-trades`, from)) flow.addTrade("futures", row);
-    for await (const row of readStream<TradeRow>(`${pair}/spot-trades`, from)) flow.addTrade("spot", row);
-    for await (const row of readStream<LiquidationRow>("ALL/futures-liquidations", from)) flow.addLiquidation(row);
+    for (const row of readStream<DepthRow>(`${pair}/futures-depth`, from)) flow.addBook("futures", row);
+    for (const row of readStream<DepthRow>(`${pair}/spot-depth`, from)) flow.addBook("spot", row);
+    for (const row of readStream<TradeRow>(`${pair}/futures-trades`, from)) flow.addTrade("futures", row);
+    for (const row of readStream<TradeRow>(`${pair}/spot-trades`, from)) flow.addTrade("spot", row);
+    for (const row of readStream<LiquidationRow>("ALL/futures-liquidations", from)) flow.addLiquidation(row);
     this.history.set(pair, flow);
     return flow;
   }
@@ -173,7 +175,7 @@ class OrderFlowService {
    */
   public async train(pair: CryptoPairs): Promise<IOrderFlowBundle | null> {
     if (!cryptoConfig.features.orderFlow) return null;
-    const flow = await this.loadHistory(pair);
+    const flow = this.loadHistory(pair);
     const seconds = flow.seconds();
     const hours = seconds.length / 3600;
     if (hours < cryptoConfig.orderFlow.minHours) {
@@ -268,7 +270,7 @@ class OrderFlowService {
 
       const raw = (x: number[][][]) => {
         const t = this.toTensor(x, featureMean, featureStd);
-        const out = tf.tidy(() => (model.predict(t) as tfType.Tensor).arraySync() as number[][]);
+        const out = tf.tidy(() => (model.predict(t, { batchSize: 2048 }) as tfType.Tensor).arraySync() as number[][]);
         t.dispose();
         return out.map((row) => row.map((v, j) => v * targetStd[j]));
       };
@@ -335,6 +337,11 @@ class OrderFlowService {
 
   public liveBundle(pair: CryptoPairs): IOrderFlowBundle | undefined {
     return this.bundles.get(pair);
+  }
+
+  /** The recorded history (~50 MB of memory per recorded day) is needed only until the DQN has its verdicts. */
+  public releaseHistory(pair: CryptoPairs): void {
+    this.history.delete(pair);
   }
 
   // ---------- verdicts for the DQN ----------

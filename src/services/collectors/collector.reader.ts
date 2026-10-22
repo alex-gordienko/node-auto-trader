@@ -58,9 +58,10 @@ const readHourFile = (file: string): string => {
 /**
  * Rows of a recorded stream. Files are routed by receive time and rows are stored by event time,
  * so rows are filtered by their first field (a timestamp in ms). Unfinished lines at the end of an
- * interrupted part are skipped.
+ * interrupted part are skipped. Synchronous: files are read whole anyway, and an async generator costs a promise
+ * per row (≈1M trade rows per day per stream).
  */
-export async function* readStream<T extends unknown[]>(stream: string, fromMs = 0, toMs = Infinity): AsyncGenerator<T> {
+export function* readStream<T extends unknown[]>(stream: string, fromMs = 0, toMs = Infinity): Generator<T> {
   for (const file of listStreamFiles(stream, fromMs - 3600_000, toMs + 3600_000)) {
     for (const line of readHourFile(file).split("\n")) {
       if (!line) continue;
