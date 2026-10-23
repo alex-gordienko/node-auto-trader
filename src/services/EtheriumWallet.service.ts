@@ -2,19 +2,26 @@ import * as Ethers from "ethers";
 import cryptoConfig from "../config/crypto.config";
 import { log, Colors } from "../utils/colored-console";
 
+/**
+ * The signer is built on first use, not at import. This module is pulled in transitively by the storage services
+ * (and so by `rebalance:backtest` and `daily-horizon`, which only need `convertBigIntToETH`); constructing the
+ * wallet eagerly made every one of those paths require ETHERIUM_PRIVATE_KEY and INFURA_API_KEY just to format a
+ * number. Anything that actually signs or queries the chain now fails with the missing-variable error from
+ * config/env.ts at the moment it is called.
+ */
 class EtheriumWallet {
-  private readonly infuraAPIkey = cryptoConfig.infuraApiKey;
-  private readonly etheriumPrivateKey = cryptoConfig.etheriumPrivateKey;
-
-  private wallet: Ethers.ethers.Wallet;
+  private walletInstance: Ethers.ethers.Wallet | null = null;
 
   constructor() {
     log("[*] Initializing Etherium Wallet Service", Colors.CYAN);
-    const provider = new Ethers.JsonRpcProvider(`https://mainnet.infura.io/v3/${this.infuraAPIkey}`);
-    const wallet = new Ethers.ethers.Wallet(this.etheriumPrivateKey, provider);
+  }
 
-    this.wallet = wallet;
-    this.getBalance();
+  private get wallet(): Ethers.ethers.Wallet {
+    if (!this.walletInstance) {
+      const provider = new Ethers.JsonRpcProvider(`https://mainnet.infura.io/v3/${cryptoConfig.infuraApiKey}`);
+      this.walletInstance = new Ethers.ethers.Wallet(cryptoConfig.etheriumPrivateKey, provider);
+    }
+    return this.walletInstance;
   }
 
   public convertBigIntToETH = (balance: bigint) => Ethers.ethers.formatEther(balance);

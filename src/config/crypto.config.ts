@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import path from "path";
+import { requireEnv } from "./env";
 dotenv.config();
 
 /** Sorted unique horizons that always include the main one. */
@@ -12,21 +13,41 @@ const cryptoConfig = {
   // shadow portfolio. The 50/50 rule trades without them; MODELS_ENABLED=false saves the daily training (~40 min of
   // CPU). Market data is collected either way.
   modelsEnabled: (process.env.MODELS_ENABLED || "true") === "true",
+  // Secrets and addresses are getters, not plain values: reading one without the environment variable set throws
+  // and names the variable (see config/env.ts). Nothing here has a default — a placeholder string would boot a
+  // misconfigured process and fail later, against funds. Data-only paths never read these fields.
+
   // api-keys
-  changeNowApiKey: process.env.CHANGE_NOW_API || "YOUR_API_KEY", // exchange currencies
+  get changeNowApiKey(): string {
+    return requireEnv("CHANGE_NOW_API", "ChangeNOW swap-aggregator API key");
+  },
 
   // providers api-keys
-  infuraApiKey: process.env.INFURA_API_KEY || "YOUR_API_KEY", // provider for Atomic wallet API
-  blockCypherApiKey: process.env.BLOCK_CYPHER_API || "YOUR_API",
-  zeroXApiKey: process.env.ZEROX_API_KEY || "YOUR_API_KEY", // provider for DEX-aggregator API
+  get infuraApiKey(): string {
+    return requireEnv("INFURA_API_KEY", "Infura JSON-RPC project key for the Ethereum provider");
+  },
+  get blockCypherApiKey(): string {
+    return requireEnv("BLOCK_CYPHER_API", "BlockCypher API key");
+  },
+  get zeroXApiKey(): string {
+    return requireEnv("ZEROX_API_KEY", "0x DEX-aggregator API key");
+  },
 
   // wallet addresses
-  etheriumWallet: process.env.ETHERIUM_WALLET_ADDRESS || "YOUR_WALLET", // wallet for Etherium from Atomic
-  wavesWallet: process.env.WAVES_WALLET_ADDRESS || "YOUR_WALLET", // wallet for Waves from Atomic
+  get etheriumWallet(): string {
+    return requireEnv("ETHERIUM_WALLET_ADDRESS", "Ethereum wallet address funds are sent to");
+  },
+  get wavesWallet(): string {
+    return requireEnv("WAVES_WALLET_ADDRESS", "Waves wallet address funds are sent to");
+  },
 
-  // wallet keys
-  etheriumPrivateKey: process.env.ETHERIUM_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Etherium from Atomic
-  wavesPrivateKey: process.env.WAVES_PRIVATE_KEY || "YOUR_PRIVATE", // wallet for Waves from Atomic
+  // wallet keys — never log these, never write them to Storage
+  get etheriumPrivateKey(): string {
+    return requireEnv("ETHERIUM_PRIVATE_KEY", "Ethereum wallet private key used to sign transactions");
+  },
+  get wavesPrivateKey(): string {
+    return requireEnv("WAVES_PRIVATE_KEY", "Waves wallet private key used to sign transactions");
+  },
 
   // DQN looks at this many minutes
   longTermMinuteWindowPrediction: Number(process.env.REQUEST_LIMIT_LONG_TERM_PREDICTION || 15),

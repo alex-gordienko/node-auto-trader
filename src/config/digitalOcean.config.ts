@@ -1,11 +1,22 @@
 import dotenv from 'dotenv'
+import { requireEnv } from './env'
 dotenv.config()
 
+// Every field is a getter without a default: a placeholder endpoint or key used to let the Spaces client build
+// successfully and fail on the first upload. Reading an unset one now throws and names the variable.
 const digitalOceanConfig = {
-  accessKeyId: process.env.DO_KEY_ID || "your-access-key-id",
-  secretAccessKey: process.env.DO_SECRET_KEY || "your-secret",
-  endpoint: process.env.DO_SPACE_ENDPOINT || "your-endpoint",
-  bucket: process.env.DO_SPACE_BUCKET || "your-bucket-name",
+  get accessKeyId(): string {
+    return requireEnv("DO_KEY_ID", "DigitalOcean Spaces access key id");
+  },
+  get secretAccessKey(): string {
+    return requireEnv("DO_SECRET_KEY", "DigitalOcean Spaces secret access key");
+  },
+  get endpoint(): string {
+    return requireEnv("DO_SPACE_ENDPOINT", "DigitalOcean Spaces endpoint URL");
+  },
+  get bucket(): string {
+    return requireEnv("DO_SPACE_BUCKET", "DigitalOcean Spaces bucket name");
+  },
 };
 
 export default digitalOceanConfig;

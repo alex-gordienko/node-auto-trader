@@ -11,12 +11,19 @@ import { ICryptoExchangeSwapResponse, ICryptoExchangePossiblePairsResponse } fro
 
 class CryptoExchangeService {
   private readonly changeNOW_base_url: string = "https://api.changenow.io/v2";
-  private readonly ETH_wallet: string = cryptoConfig.etheriumWallet;
-  private readonly changeNOW_api_key: string = cryptoConfig.changeNowApiKey;
+
+  // read per call so importing this module needs neither the API key nor the wallet address
+  private get ETH_wallet(): string {
+    return cryptoConfig.etheriumWallet;
+  }
+
+  private get changeNOW_api_key(): string {
+    return cryptoConfig.changeNowApiKey;
+  }
 
   constructor() {
+    // No pair discovery here: it was an HTTP call on import. `swapCoins` checks availability before every swap.
     log("[*] Initializing Crypto Exchange Service", Colors.MAGENTA);
-    this.getAvailableTradePairs();
   }
 
   public getAvailableTradePairs = async (): Promise<boolean> => {

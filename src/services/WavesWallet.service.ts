@@ -15,15 +15,24 @@ const agent = new https.Agent({
   rejectUnauthorized: false,
 });
 
+/**
+ * Address and key are read per call, not at import: as a module-level singleton this service would otherwise
+ * require WAVES_WALLET_ADDRESS / WAVES_PRIVATE_KEY in every process that merely imports a storage service.
+ * Reading them now raises the missing-variable error from config/env.ts at the point of use.
+ */
 class WavesWalletService {
-  private readonly wavesWallet = cryptoConfig.wavesWallet;
-  private readonly wavesPrivateKey = cryptoConfig.wavesPrivateKey;
+  private get wavesWallet(): string {
+    return cryptoConfig.wavesWallet;
+  }
+
+  private get wavesPrivateKey(): string {
+    return cryptoConfig.wavesPrivateKey;
+  }
 
   private readonly wavesNodeUrl = "https://nodes.wavesnodes.com";
 
   constructor() {
     log("[*] Initializing Waves Wallet Service", Colors.YELLOW);
-    this.getBalance();
   }
 
   public convertLongToWaves = (amount?: number | string): number => { 
