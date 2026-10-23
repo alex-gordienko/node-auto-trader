@@ -17,6 +17,8 @@
     "backfill:binance": "ts-node --transpile-only src/scripts/binance-backfill.ts",
     "backtest": "MODELS_DIR=\"$PWD/src/Storage/backtest/models\" NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/backtest.ts",
     "collect:stats": "ts-node --transpile-only src/scripts/collector-stats.ts",
+    "dataset:inventory": "ts-node --transpile-only src/scripts/dataset-inventory.ts",
+    "dataset:fetch": "ts-node --transpile-only src/scripts/dataset-fetch.ts",
     "features:report": "MODELS_DIR=\"$PWD/src/Storage/features-report/models\" NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/features-report.ts",
     "signal:orderflow": "NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/orderflow-signal.ts",
     "rebalance:backtest": "ts-node --transpile-only src/scripts/rebalance-backtest.ts"
