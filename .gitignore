@@ -134,4 +134,3 @@ dist
 .firebase
 
 src/Storage/
-src/models/
