@@ -13,7 +13,7 @@
     "dev": "npx nodemon",
     "statistic": "cd statistic && yarn start",
     "lint": "eslint . --ext .ts",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --require ts-node/register --test test/**/*.test.ts",
     "backfill:binance": "ts-node --transpile-only src/scripts/binance-backfill.ts",
     "backtest": "MODELS_DIR=\"$PWD/src/Storage/backtest/models\" NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/backtest.ts",
     "collect:stats": "ts-node --transpile-only src/scripts/collector-stats.ts",
