@@ -5,6 +5,8 @@ export interface IOHLCV {
   low: number;
   close: number;
   volume: number;
+  trades?: number;
+  takerBuyVolume?: number; // base volume bought by market orders
 }
 
 export interface IIndicatorSeries {
@@ -197,14 +199,23 @@ export const computeIndicators = (candles: IOHLCV[]): IIndicatorSeries => {
   };
 };
 
-/** Scale-free market features. Position and unrealized PnL are appended by the RL env. */
-export const MARKET_FEATURE_COUNT = 17;
-export const STATE_FEATURE_COUNT = MARKET_FEATURE_COUNT + 2;
+/** Scale-free market features: 17 from OHLCV indicators + 3 from order flow. */
+export const MARKET_FEATURE_COUNT = 20;
 export const INDICATOR_WARMUP = 40;
+/** Per reference market (e.g. BTC): its 1-bar and 5-bar return, our 5-bar return relative to it, its order flow. */
+export const REFERENCE_FEATURE_COUNT = 4;
+
+/** Taker buy share minus 0.5: > 0 when aggressive buyers dominate; 0 when the data is not available. */
+const takerImbalance = (candle: IOHLCV): number =>
+  candle.takerBuyVolume !== undefined && candle.volume > 0 ? candle.takerBuyVolume / candle.volume - 0.5 : 0;
 
 export const buildMarketFeatures = (candles: IOHLCV[]): number[][] => {
   const indicators = computeIndicators(candles);
   const features: number[][] = [];
+  const imbalance = candles.map(takerImbalance);
+  const imbalance5 = sma(imbalance, 5);
+  const trades = candles.map((c) => c.trades ?? 0);
+  const tradesSma20 = sma(trades, 20);
 
   for (let i = 0; i < candles.length; i++) {
     const candle = candles[i];
@@ -234,8 +245,90 @@ export const buildMarketFeatures = (candles: IOHLCV[]): number[][] => {
       safeDiv(indicators.atr14[i], candle.close),
       indicators.stochK[i] / 100,
       indicators.stochD[i] / 100,
+      // order flow: who is aggressive now and over the last 5 bars, and how busy the market is
+      imbalance[i],
+      imbalance5[i],
+      candle.trades !== undefined ? Math.log((trades[i] + 1) / (tradesSma20[i] + 1)) : 0,
     ]);
   }
 
   return features;
+};
+
+/**
+ * Features of `candles` relative to a reference market aligned by time (bars of the same size).
+ * Missing reference bars give zeros, so a gap in reference data never shifts the alignment.
+ */
+export const buildReferenceFeatures = (candles: IOHLCV[], reference: IOHLCV[], step: number): number[][] => {
+  const byTime = new Map<number, IOHLCV>();
+  reference.forEach((c) => byTime.set(c.time, c));
+  const logReturn = (to?: IOHLCV, from?: IOHLCV) => (to && from && from.close > 0 ? Math.log(to.close / from.close) : 0);
+
+  return candles.map((candle, i) => {
+    const ref = byTime.get(candle.time);
+    if (!ref) return new Array(REFERENCE_FEATURE_COUNT).fill(0);
+    const ref5 = logReturn(ref, byTime.get(candle.time - 5 * step));
+    const own5 = i >= 5 ? logReturn(candle, candles[i - 5]) : 0;
+    return [logReturn(ref, byTime.get(candle.time - step)), ref5, own5 - ref5, takerImbalance(ref)];
+  });
+};
+
+/** Market features followed by features against every reference market. */
+/** Futures premium per candle: current value and its average over `window` bars, in basis points. */
+export const PREMIUM_FEATURE_COUNT = 2;
+
+/** A point of the premium series aligned with a candle (same open time). */
+export interface IPremiumPoint {
+  time: number;
+  close: number;
+}
+
+export const buildPremiumFeatures = (candles: IOHLCV[], premium: IPremiumPoint[], window: number): number[][] => {
+  const byTime = new Map<number, number>();
+  premium.forEach((p) => byTime.set(p.time, p.close * 1e4));
+  const values = candles.map((c) => byTime.get(c.time));
+  const recent: number[] = [];
+  return values.map((value) => {
+    if (value === undefined) return new Array(PREMIUM_FEATURE_COUNT).fill(0);
+    recent.push(value);
+    if (recent.length > window) recent.shift();
+    return [value, recent.reduce((sum, v) => sum + v, 0) / recent.length];
+  });
+};
+
+/**
+ * Coinbase premium per candle: Coinbase USD close / own close − 1. The Coinbase bar of the same time, or the one
+ * before it when it is not published yet (live), so training and live see the latest known value.
+ */
+export const coinbasePremium = (candles: IOHLCV[], coinbase: IOHLCV[], step: number): IPremiumPoint[] => {
+  const byTime = new Map<number, number>();
+  coinbase.forEach((c) => byTime.set(c.time, c.close));
+  const points: IPremiumPoint[] = [];
+  for (const candle of candles) {
+    const usd = byTime.get(candle.time) ?? byTime.get(candle.time - step);
+    if (usd && candle.close > 0) points.push({ time: candle.time, close: usd / candle.close - 1 });
+  }
+  return points;
+};
+
+/**
+ * Market features, then features against every reference market, then the futures premium and the Coinbase premium.
+ * An empty reference, premium or Coinbase series gives zeros (missing data or a feature group switched off).
+ */
+export const buildCandleFeatures = (
+  candles: IOHLCV[],
+  references: IOHLCV[][],
+  step: number,
+  premium: IPremiumPoint[] = [],
+  coinbase: IOHLCV[] = []
+): number[][] => {
+  const market = buildMarketFeatures(candles);
+  const relative = references.map((reference) => buildReferenceFeatures(candles, reference, step));
+  // average over the last hour of minute bars, or the last day of hourly bars
+  const window = step === 60 ? 60 : 24;
+  const premiumRows = buildPremiumFeatures(candles, premium, window);
+  const coinbaseRows = buildPremiumFeatures(candles, coinbasePremium(candles, coinbase, step), window);
+  return market.map((row, i) =>
+    relative.reduce((acc, ref) => acc.concat(ref[i]), row).concat(premiumRows[i], coinbaseRows[i])
+  );
 };

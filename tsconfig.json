@@ -104,5 +104,8 @@
     /* Completeness */
     // "skipDefaultLibCheck": true,                      /* Skip type checking .d.ts files that are included with TypeScript. */
     "skipLibCheck": true                                 /* Skip type checking all .d.ts files. */
-  }
+  },
+  // DigitalOcean.storage.service.ts belongs to the old ETH/WAVES flow and is not used (Local.storage.service
+  // replaced it); it no longer compiles, so it is kept out of the build until it is needed again
+  "exclude": ["node_modules", "build", "statistic", "src/services/DigitalOcean.storage.service.ts"]
 }

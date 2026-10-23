@@ -7,7 +7,7 @@ import { WithId, WithProofs } from "@waves/waves-transactions";
 import { TransferTransaction } from "@waves/ts-types";
 
 import config from "../config/digitalOcean.config";
-import { ICyptoCompareData, ICyptoCompareHistoryMinutePair } from "../types/cryptoCompare.types";
+import { IMarketCandle as ICyptoCompareData } from "../types/marketData.types";
 import { log, Colors } from "../utils/colored-console";
 import {
   ICryproExchangeWalletHistory,

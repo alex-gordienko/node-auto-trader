@@ -7,11 +7,19 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "start": "tsc && cp ./xmrig-ubuntu ./build/xmrig-ubuntu && node build/index.js",
+    "build": "tsc && cp ./xmrig-ubuntu ./build/xmrig-ubuntu",
+    "start": "yarn build && node build/index.js",
+    "serve": "node build/index.js",
     "dev": "npx nodemon",
     "statistic": "cd statistic && yarn start",
     "lint": "eslint . --ext .ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "backfill:binance": "ts-node --transpile-only src/scripts/binance-backfill.ts",
+    "backtest": "MODELS_DIR=\"$PWD/src/Storage/backtest/models\" NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/backtest.ts",
+    "collect:stats": "ts-node --transpile-only src/scripts/collector-stats.ts",
+    "features:report": "MODELS_DIR=\"$PWD/src/Storage/features-report/models\" NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/features-report.ts",
+    "signal:orderflow": "NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/orderflow-signal.ts",
+    "rebalance:backtest": "ts-node --transpile-only src/scripts/rebalance-backtest.ts"
   },
   "dependencies": {
     "@tensorflow/tfjs": "4.22.0",
@@ -19,6 +27,7 @@
     "@tensorflow/tfjs-node": "4.22.0",
     "@tensorflow/tfjs-node-gpu": "4.22.0",
     "@waves/waves-transactions": "^4.3.11",
+    "adm-zip": "0.5.14",
     "aws-sdk": "^2.1677.0",
     "axios": "^1.7.2",
     "date-fns": "^3.6.0",
@@ -31,6 +40,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.6.0",
+    "@types/adm-zip": "0.5.7",
     "@types/express": "^4.17.21",
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^20.14.10",

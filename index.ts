@@ -7,6 +7,7 @@ import router from "./src/routes";
 import cryptoConfig from "./src/config/crypto.config";
 
 import "./src/services/StatisticAndPrediction.service";
+import CollectorsService from "./src/services/collectors/Collectors.service";
 
 import { log, Colors } from "./src/utils/colored-console";
 
@@ -39,6 +40,20 @@ const initApp = async () => {
 };
 
 initApp();
+
+// order book / trades / liquidations recorders run in a worker thread, unaffected by model training
+CollectorsService.start();
+
+let shuttingDown = false;
+const shutdown = async (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log(`${signal}: stopping recorders and closing their files`, Colors.YELLOW);
+  await CollectorsService.stop();
+  process.exit(0);
+};
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 process.on("exit", function () {
   console.log("About to exit.");

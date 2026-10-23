@@ -62,8 +62,14 @@ export interface ITensorflowPrediction {
   predicted_value: number;
   predicted_command: string;
   predicted_return?: number;
-  forecast_raw_return?: number;
+  // raw forecast outputs (see FORECAST_LAYOUT) — kept even when unreliable, so self-correction can judge them
+  forecast_raw?: number[];
+  forecast_path?: IForecastPath;
   forecast_reliable?: boolean;
+  // order-book model's verdict at the decision, one value per ORDERFLOW_HORIZONS_SECONDS (0 where not reliable)
+  orderflow_verdict?: number[];
+  // position the DQN decided from: 1 = holding ETH, 0 = holding USDT
+  position?: number;
   q_values?: {
     hold: number;
     buy: number;
@@ -81,4 +87,11 @@ export interface ICryptoExchangeTransactionsHistory {
   walletTo: string;
   transactionHash: string;
   networkFee: number | bigint;
+}
+export interface IForecastPath {
+  horizons: { minutes: number; return: number; reliable: boolean }[];
+  // best price to sell (max) / buy (min) within the longest horizon, and when it is expected
+  // `reliable` refers to the size of the move, `timeReliable` to when it happens: they are checked separately
+  max: { return: number; inMinutes: number; reliable: boolean; timeReliable: boolean };
+  min: { return: number; inMinutes: number; reliable: boolean; timeReliable: boolean };
 }
