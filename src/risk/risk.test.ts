@@ -25,6 +25,18 @@ import {
 } from "./costs";
 import { maxDrawdown, performanceMetrics } from "./metrics";
 import { evaluateRiskLimits, DEFAULT_RISK_LIMITS } from "./limits";
+import {
+  canEnter,
+  checkEmergencyConditions,
+  DEFAULT_GUARDRAILS,
+  initialGuardrailState,
+  manualReArm,
+  recordBarReturn,
+  recordClosedTrade,
+  recordEntry,
+  rollGuardrailDay,
+  trailingStdDev,
+} from "./guardrails";
 
 type Test = { name: string; run: () => void };
 const tests: Test[] = [];
@@ -451,6 +463,146 @@ test("the kill switch is not reachable by the system itself", () => {
   );
   assert.strictEqual(killed.action, "kill");
   assert.strictEqual(killed.requiresHumanReset, true, "a kill must need a human to clear");
+});
+
+// --- guardrails: daily trade cap and kill-switch (TRA-18) ------------------------------------------------
+
+test("the daily trade cap blocks a new entry once it is spent, but never blocks an exit", () => {
+  const config = { ...DEFAULT_GUARDRAILS, maxTradesPerDay: 2 };
+  let state = initialGuardrailState(1);
+  state = rollGuardrailDay(state, 1_700_000_000, config);
+
+  assert.strictEqual(canEnter(state, config), true);
+  state = recordEntry(state);
+  state = recordEntry(state);
+  assert.strictEqual(state.entriesToday, 2);
+  assert.strictEqual(canEnter(state, config), false, "the cap is spent");
+
+  // the cap is spent, but it says nothing about exits: a halt is the only thing allowed to force flat
+  assert.strictEqual(state.halted, false);
+});
+
+test("a losing streak trips the kill switch without needing a human to clear it", () => {
+  const config = { ...DEFAULT_GUARDRAILS, maxConsecutiveLosingTrades: 3 };
+  let state = initialGuardrailState(1);
+
+  state = recordClosedTrade(state, -0.01, config);
+  state = recordClosedTrade(state, -0.01, config);
+  assert.strictEqual(state.halted, false, "two losses do not trip a 3-loss switch");
+
+  state = recordClosedTrade(state, -0.01, config);
+  assert.strictEqual(state.halted, true);
+  assert.strictEqual(state.haltReason, "consecutive_losses");
+  assert.strictEqual(state.requiresHumanReset, false, "a cold streak is expected variance, not an emergency");
+
+  // a win anywhere resets the counter back to zero
+  let fresh = initialGuardrailState(1);
+  fresh = recordClosedTrade(fresh, -0.01, config);
+  fresh = recordClosedTrade(fresh, 0.02, config);
+  assert.strictEqual(fresh.consecutiveLosingTrades, 0);
+});
+
+test("emergency halts — drawdown, extreme volatility, a data gap — always require a human reset", () => {
+  const config = { ...DEFAULT_GUARDRAILS, maxDrawdownFraction: 0.1, extremeVolatilityZScore: 4 };
+
+  const drawdown = checkEmergencyConditions(
+    initialGuardrailState(10_000),
+    { equity: 8_900, barReturn: 0, trailingVolatility: 0.001, isDataGap: false },
+    config
+  );
+  assert.strictEqual(drawdown.haltReason, "max_drawdown");
+  assert.strictEqual(drawdown.requiresHumanReset, true);
+
+  const volatility = checkEmergencyConditions(
+    initialGuardrailState(10_000),
+    { equity: 10_000, barReturn: 0.1, trailingVolatility: 0.01, isDataGap: false }, // 10 sigma move
+    config
+  );
+  assert.strictEqual(volatility.haltReason, "extreme_volatility");
+  assert.strictEqual(volatility.requiresHumanReset, true);
+
+  const gap = checkEmergencyConditions(
+    initialGuardrailState(10_000),
+    { equity: 10_000, barReturn: null, trailingVolatility: null, isDataGap: true },
+    config
+  );
+  assert.strictEqual(gap.haltReason, "data_gap");
+  assert.strictEqual(gap.requiresHumanReset, true);
+});
+
+test("a consecutive-loss halt auto-clears after enough profitable days; an emergency halt does not", () => {
+  const config = { ...DEFAULT_GUARDRAILS, consecutiveLossAutoResetProfitableDays: 1 };
+  const DAY = 86_400;
+
+  let cooled = initialGuardrailState(1);
+  cooled = rollGuardrailDay(cooled, 0, config);
+  cooled = recordClosedTrade(cooled, -0.01, config);
+  cooled = recordClosedTrade(cooled, -0.01, config);
+  cooled = recordClosedTrade(cooled, -0.01, config);
+  cooled = recordClosedTrade(cooled, -0.01, config);
+  assert.strictEqual(cooled.halted, true);
+  cooled = recordBarReturn(cooled, 0.02); // the rest of the day closes green
+  cooled = rollGuardrailDay(cooled, DAY, config); // a new UTC day, one profitable day behind it
+  assert.strictEqual(cooled.halted, false, "a cold streak clears itself after a clean day");
+  assert.strictEqual(cooled.consecutiveLosingTrades, 0);
+
+  let emergency = initialGuardrailState(10_000);
+  emergency = checkEmergencyConditions(
+    emergency,
+    { equity: 8_000, barReturn: null, trailingVolatility: null, isDataGap: false },
+    { ...config, maxDrawdownFraction: 0.1 }
+  );
+  assert.strictEqual(emergency.halted, true);
+  emergency = { ...emergency, dayNetReturn: 0.05 };
+  emergency = rollGuardrailDay(emergency, DAY, config);
+  assert.strictEqual(emergency.halted, true, "an emergency halt never clears itself, however good the following days are");
+  assert.strictEqual(manualReArm(emergency).halted, false, "only an operator can clear it");
+});
+
+test("trailingStdDev needs enough samples and ignores gaps", () => {
+  const sparse = [0.001, -0.001, 0.002];
+  assert.strictEqual(trailingStdDev(sparse, 3, 100), null, "too few samples to trust");
+
+  const window: number[] = Array.from({ length: 30 }, (_, i) => (i % 2 === 0 ? 0.001 : -0.001));
+  window[10] = NaN; // a data gap in the middle of the window
+  const std = trailingStdDev(window, 30, 30);
+  assert.ok(std !== null && Number.isFinite(std), "NaNs are dropped, not propagated");
+});
+
+test("the backtester enforces the daily trade cap pre-trade, not after the fact", () => {
+  const bars = makeBars([100, 105, 100, 105, 100, 105, 100, 105, 100, 105, 100]);
+  const report = runBacktest(bars, oracle(bars), { costModel: FREE, guardrails: { maxTradesPerDay: 2 } });
+
+  assert.ok(report.blockedEntries.length > 0, "later flips in the same day must be blocked");
+  assert.strictEqual(report.finalGuardrailState?.entriesToday, 2, "the cap, not the number of signals, bounds entries");
+});
+
+test("the backtester kill switch halts new entries after enough consecutive losses and flattens the book", () => {
+  const bars = makeBars([100, 105, 100, 105, 100, 105, 100, 105, 100, 105, 100, 105, 100]);
+  // betting against the oracle is wrong on every single bar, so every closed position is a loss
+  const antiOracle: IPrediction[] = oracle(bars).map((p) => ({ ...p, direction: (-p.direction) as -1 | 0 | 1 }));
+  const report = runBacktest(bars, antiOracle, {
+    costModel: FREE,
+    guardrails: { maxConsecutiveLosingTrades: 2, maxTradesPerDay: 100 },
+  });
+
+  assert.ok(report.guardrailHalts.some((h) => h.reason === "consecutive_losses"));
+  assert.strictEqual(report.finalGuardrailState?.halted, true);
+  assert.strictEqual(report.finalGuardrailState?.requiresHumanReset, false);
+
+  const haltBarIndex = report.guardrailHalts[0].barIndex;
+  const tradesAfterHalt = report.trades.filter((t) => t.signalBarIndex > haltBarIndex && t.toExposure !== 0);
+  assert.strictEqual(tradesAfterHalt.length, 0, "no new position should open once the kill switch is tripped");
+});
+
+test("a data feed gap trips the guardrail kill switch and requires a human to clear it", () => {
+  const bars = makeBars([100, 101, 102, 103]);
+  bars[2] = { ...bars[2], time: bars[2].time + 3600, open: 150, close: 160 };
+  const alwaysLong: IPrediction[] = bars.map((bar) => ({ time: bar.time, direction: 1 as const }));
+  const report = runBacktest(bars, alwaysLong, { costModel: FREE, guardrails: {} });
+
+  assert.ok(report.guardrailHalts.some((h) => h.reason === "data_gap"));
+  assert.strictEqual(report.finalGuardrailState?.requiresHumanReset, true);
 });
 
 // --- runner -----------------------------------------------------------------------------------------------

@@ -41,6 +41,20 @@ import { IBacktestBar, BAR_SECONDS_5MIN } from "./bars";
 import { IPerformanceMetrics, performanceMetrics } from "./metrics";
 import { BARS_PER_YEAR_5MIN } from "./breakeven";
 import { createRng, Rng } from "./random";
+import {
+  canEnter,
+  checkEmergencyConditions,
+  DEFAULT_GUARDRAILS,
+  GuardrailHaltReason,
+  IGuardrailConfig,
+  IGuardrailState,
+  initialGuardrailState,
+  recordBarReturn,
+  recordClosedTrade,
+  recordEntry,
+  rollGuardrailDay,
+  trailingStdDev,
+} from "./guardrails";
 
 /** A directional call made at the close of the bar whose open time is `time`. */
 export interface IPrediction {
@@ -77,6 +91,13 @@ export interface IBacktestOptions {
   makerFillRate?: number;
   seed?: number;
   strictNoLookAhead?: boolean;
+  /**
+   * Pre-trade guardrails: a hard daily entry cap and a kill-switch (consecutive losses, drawdown, extreme
+   * volatility, data gaps). Undefined (the default) runs with no guardrails at all, so existing callers and
+   * tests are unaffected. Partial — anything omitted falls back to `DEFAULT_GUARDRAILS`; pass `{}` to turn
+   * guardrails on with those defaults untouched.
+   */
+  guardrails?: Partial<IGuardrailConfig>;
 }
 
 export interface ITradeRecord {
@@ -94,6 +115,19 @@ export interface ITradeRecord {
   costQuote: number;
   feeQuote: number;
   slippageQuote: number;
+}
+
+export interface IGuardrailHaltEvent {
+  barIndex: number;
+  time: number;
+  reason: GuardrailHaltReason;
+}
+
+/** A new entry that the day's trade cap blocked: the attempt is dropped, no order is sent. */
+export interface IBlockedEntryEvent {
+  barIndex: number;
+  time: number;
+  entriesToday: number;
 }
 
 export interface IClosedPosition {
@@ -131,6 +165,10 @@ export interface IBacktestReport {
   netBarReturns: number[];
   trades: ITradeRecord[];
   positions: IClosedPosition[];
+  /** present only when `options.guardrails` was set */
+  guardrailHalts: IGuardrailHaltEvent[];
+  blockedEntries: IBlockedEntryEvent[];
+  finalGuardrailState: IGuardrailState | null;
 }
 
 const DEFAULTS = {
@@ -191,6 +229,15 @@ export const runBacktest = (
   const predictionByTime = new Map<number, IPrediction>();
   for (const prediction of predictions) predictionByTime.set(prediction.time, prediction);
 
+  const guardrailConfig: IGuardrailConfig | null = options.guardrails ? { ...DEFAULT_GUARDRAILS, ...options.guardrails } : null;
+  let guardrailState: IGuardrailState | null = guardrailConfig ? initialGuardrailState(opts.startEquity) : null;
+  const guardrailHalts: IGuardrailHaltEvent[] = [];
+  const blockedEntries: IBlockedEntryEvent[] = [];
+  // close-to-close returns aligned by index, used only for the volatility guardrail; NaN across a gap or at index 0
+  const barReturns: number[] = bars.map((bar, i) =>
+    i > 0 && bar.time - bars[i - 1].time === opts.barSeconds ? (bar.close - bars[i - 1].close) / bars[i - 1].close : NaN
+  );
+
   const equityCurve: number[] = [opts.startEquity];
   const netBarReturns: number[] = [];
   const trades: ITradeRecord[] = [];
@@ -235,6 +282,25 @@ export const runBacktest = (
     // A data gap means the bars are not adjacent, so there is no continuous price path between them. Carrying
     // a position across the hole would claim a move we cannot show happened, so flatten and claim nothing.
     const isGap = execBar.time - signalBar.time !== opts.barSeconds;
+
+    if (guardrailState && guardrailConfig) {
+      const wasHalted = guardrailState.halted;
+      guardrailState = rollGuardrailDay(guardrailState, signalBar.time, guardrailConfig);
+      guardrailState = checkEmergencyConditions(
+        guardrailState,
+        {
+          equity,
+          barReturn: Number.isFinite(barReturns[signalIndex]) ? barReturns[signalIndex] : null,
+          trailingVolatility: trailingStdDev(barReturns, signalIndex, guardrailConfig.volatilityLookbackBars),
+          isDataGap: isGap,
+        },
+        guardrailConfig
+      );
+      if (!wasHalted && guardrailState.halted) {
+        guardrailHalts.push({ barIndex: signalIndex, time: signalBar.time, reason: guardrailState.haltReason! });
+      }
+    }
+
     if (isGap) {
       let gapCostReturn = 0;
       if (exposure !== 0) {
@@ -265,6 +331,18 @@ export const runBacktest = (
         equity *= 1 + gapCostReturn;
         closePosition(signalIndex);
         exposure = 0;
+
+        if (guardrailState && guardrailConfig && positions[positions.length - 1]?.closeBarIndex === signalIndex) {
+          const wasHalted = guardrailState.halted;
+          guardrailState = recordClosedTrade(guardrailState, positions[positions.length - 1].netReturn, guardrailConfig);
+          if (!wasHalted && guardrailState.halted) {
+            guardrailHalts.push({ barIndex: signalIndex, time: signalBar.time, reason: guardrailState.haltReason! });
+          }
+        }
+      }
+      if (guardrailState) {
+        guardrailState = recordBarReturn(guardrailState, gapCostReturn);
+        guardrailState = { ...guardrailState, peakEquity: Math.max(guardrailState.peakEquity, equity) };
       }
       equityCurve.push(equity);
       netBarReturns.push(gapCostReturn);
@@ -279,7 +357,26 @@ export const runBacktest = (
       if (style === "maker" && rng() > opts.makerFillRate) newExposure = exposure;
     }
 
+    // Guardrail gating: a halt flattens unconditionally (a kill-switch that still lets a position ride is not
+    // one); short of a halt, the daily cap only blocks brand-new entries — closing out, or trimming toward
+    // flat, is never capped because the bot must always be able to get out of a position.
+    let guardrailEntryAttempted = false;
+    if (guardrailState && guardrailConfig) {
+      guardrailEntryAttempted = newExposure !== 0 && (exposure === 0 || Math.sign(newExposure) !== Math.sign(exposure));
+      if (guardrailState.halted) {
+        newExposure = 0;
+        guardrailEntryAttempted = false;
+      } else if (guardrailEntryAttempted && !canEnter(guardrailState, guardrailConfig)) {
+        blockedEntries.push({ barIndex: signalIndex, time: signalBar.time, entriesToday: guardrailState.entriesToday });
+        newExposure = 0;
+        guardrailEntryAttempted = false;
+      }
+    }
+
     const prevExposure = exposure;
+    if (guardrailState && guardrailConfig && guardrailEntryAttempted) {
+      guardrailState = recordEntry(guardrailState);
+    }
 
     // In flat-between-bars mode the position is closed and reopened even when the direction is unchanged, so
     // the cost is always two legs. In target-exposure mode only the difference trades.
@@ -344,6 +441,14 @@ export const runBacktest = (
     openPositionReturn += closingContribution;
     if (closesThisBar) closePosition(execIndex);
 
+    if (guardrailState && guardrailConfig && closesThisBar && positions[positions.length - 1]?.closeBarIndex === execIndex) {
+      const wasHalted = guardrailState.halted;
+      guardrailState = recordClosedTrade(guardrailState, positions[positions.length - 1].netReturn, guardrailConfig);
+      if (!wasHalted && guardrailState.halted) {
+        guardrailHalts.push({ barIndex: signalIndex, time: signalBar.time, reason: guardrailState.haltReason! });
+      }
+    }
+
     if (newExposure !== 0 && openDirection === 0) {
       openDirection = newExposure > 0 ? 1 : -1;
       openBarIndex = execIndex;
@@ -366,6 +471,11 @@ export const runBacktest = (
     exposure = newExposure;
     equityCurve.push(equity);
     netBarReturns.push(netReturn);
+
+    if (guardrailState) {
+      guardrailState = recordBarReturn(guardrailState, netReturn);
+      guardrailState = { ...guardrailState, peakEquity: Math.max(guardrailState.peakEquity, equity) };
+    }
   }
 
   // mark the final open position closed at the last bar, so it is counted rather than silently dropped
@@ -396,6 +506,9 @@ export const runBacktest = (
     netBarReturns,
     trades,
     positions,
+    guardrailHalts,
+    blockedEntries,
+    finalGuardrailState: guardrailState,
   };
 };
 
