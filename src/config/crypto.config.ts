@@ -236,6 +236,24 @@ const cryptoConfig = {
     mode: (process.env.EXECUTION_MODE || "paper") as "paper" | "live",
   },
 
+  // Signed Binance spot REST (src/services/execution/BinanceSpotVenue.ts, TRA-16 P1). baseUrl defaults to the
+  // public testnet (no real funds) — moving to a mainnet host requires an explicit override, not just flipping
+  // EXECUTION_MODE to "live". The private key is PKCS8 PEM; env files cannot hold real newlines, so a literal
+  // "\n" in the variable is unescaped here.
+  binance: {
+    baseUrl: process.env.BINANCE_EXECUTION_BASE_URL || "https://testnet.binance.vision",
+    recvWindowMs: Number(process.env.BINANCE_RECV_WINDOW_MS || 5000),
+    get apiKey(): string {
+      return requireEnv("BINANCE_API_KEY", "Binance Spot API key sent as the X-MBX-APIKEY header");
+    },
+    get ed25519PrivateKeyPem(): string {
+      return requireEnv(
+        "BINANCE_ED25519_PRIVATE_KEY",
+        "Binance Ed25519 private key (PKCS8 PEM) used to sign requests — never log this"
+      ).replace(/\\n/g, "\n");
+    },
+  },
+
   // Trading strategy: 50/50 rebalancing (utils/rebalance.ts) — paper trading only, no real swaps. Costs per swap are
   // the rl.feeRate + rl.gasUsd above. `yarn rebalance:backtest` on ETH 2017-08…2026-10 (2026-10-21): wider bands win
   // because every swap costs ~1.8% (±5 → 21%/yr, ±10 → 24–25%, ±15 → 27%, ±20 → 28–29%; buy & hold 25.6%, drawdown
