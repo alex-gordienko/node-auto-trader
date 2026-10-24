@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/Users/alexoid1999/projects/ownProjects/node-auto-trader/scripts/paperclip-issue-update.sh:*)",
+      "Bash(/Users/alexoid1999/projects/ownProjects/node-auto-trader/scripts/paperclip:*)",
+      "Bash(curl:*)",
+      "Bash(env)",
+      "Bash(env:*)"
+    ],
+    "additionalDirectories": [
+      "/Users/alexoid1999/.paperclip/instances/default/companies/a04794c3-522c-4f44-bf44-7438380179a9",
+      "/Users/alexoid1999/.paperclip/instances/default/companies/a04794c3-522c-4f44-bf44-7438380179a9/acp-engine/agents/1d784f32-dff0-47ec-9f50-fdaa97c5185f",
+      "/Users/alexoid1999/.paperclip/instances/default/companies/a04794c3-522c-4f44-bf44-7438380179a9/acp-engine/agents/3adbfa12-9608-484e-9792-c4c894b9b7a7",
+      "/Users/alexoid1999/.paperclip/instances/default/companies/a04794c3-522c-4f44-bf44-7438380179a9/acp-engine/agents/521703f9-b852-400f-9ad1-7887351b5aee",
+      "/Users/alexoid1999/.paperclip/instances/default/companies/a04794c3-522c-4f44-bf44-7438380179a9/acp-engine/agents/b221fd13-0ef8-4239-af43-ad122f377698",
+      "/Users/alexoid1999/.paperclip/instances/default/companies/a04794c3-522c-4f44-bf44-7438380179a9/acp-engine/agents/d13ed8ac-304f-417c-8123-c29345725100",
+      "/Users/alexoid1999/.paperclip/instances/default/companies/a04794c3-522c-4f44-bf44-7438380179a9/acp-engine/agents/ddb40c3b-df15-4240-b8d9-9d8137a293eb",
+      "/Users/alexoid1999/.paperclip/instances/default/companies/a04794c3-522c-4f44-bf44-7438380179a9/acp-engine/agents/ff64a21b-3a66-47e9-a7a7-200cf1086671",
+      "/Users/alexoid1999/.paperclip/instances/default/workspaces/1d784f32-dff0-47ec-9f50-fdaa97c5185f",
+      "/Users/alexoid1999/.paperclip/instances/default/workspaces/3adbfa12-9608-484e-9792-c4c894b9b7a7",
+      "/Users/alexoid1999/.paperclip/instances/default/workspaces/521703f9-b852-400f-9ad1-7887351b5aee",
+      "/Users/alexoid1999/.paperclip/instances/default/workspaces/b221fd13-0ef8-4239-af43-ad122f377698",
+      "/Users/alexoid1999/.paperclip/instances/default/workspaces/d13ed8ac-304f-417c-8123-c29345725100",
+      "/Users/alexoid1999/.paperclip/instances/default/workspaces/ddb40c3b-df15-4240-b8d9-9d8137a293eb",
+      "/Users/alexoid1999/.paperclip/instances/default/workspaces/ff64a21b-3a66-47e9-a7a7-200cf1086671"
+    ],
+    "defaultMode": "default"
+  }
+}
