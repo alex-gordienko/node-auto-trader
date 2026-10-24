@@ -3,12 +3,18 @@ import { Worker } from "worker_threads";
 
 import cryptoConfig from "../../config/crypto.config";
 import OrderFlowService from "../OrderFlow.service";
+import HealthService from "../HealthService";
+import AlertService from "../AlertService";
 import { createLogger, Colors } from "../../utils/colored-console";
 
 const log = createLogger("recorders");
 
 const RESTART_DELAY_MS = 10_000;
 const STOP_TIMEOUT_MS = 15_000;
+// a crash-loop is a real failure, not transient noise: 4 restarts inside 10 minutes gives up loudly instead of
+// looping forever and silently producing gaps in the order-book history the OrderFlow model trains on
+const RESTART_BUDGET_WINDOW_MS = 10 * 60_000;
+const RESTART_BUDGET_MAX = 4;
 
 /**
  * Runs the market data recorders as part of the server: a worker thread inside the same Node process
@@ -19,6 +25,7 @@ class CollectorsService {
   private worker: Worker | null = null;
   private stopping = false;
   private locked = false;
+  private recentRestartsAt: number[] = [];
 
   public start(): void {
     if (!cryptoConfig.collectors.enabled) {
@@ -38,7 +45,11 @@ class CollectorsService {
     this.worker = worker;
 
     worker.on("message", (message) => {
-      if (message === "locked") this.locked = true;
+      if (message === "locked") {
+        this.locked = true;
+        HealthService.recordCollectorLocked();
+        AlertService.notify("critical", "collectors-locked", "collector worker reported a second instance; this process now has zero collectors");
+      }
       // live order-flow features for the order-book model
       if (message?.type === "orderflow") OrderFlowService.addLive(message.symbol, message.second, message.vector);
     });
@@ -46,7 +57,18 @@ class CollectorsService {
     worker.on("exit", (code) => {
       this.worker = null;
       if (this.stopping || this.locked) return;
+
+      const now = Date.now();
+      this.recentRestartsAt = [...this.recentRestartsAt, now].filter((t) => now - t < RESTART_BUDGET_WINDOW_MS);
+      HealthService.recordCollectorRestart();
+      if (this.recentRestartsAt.length > RESTART_BUDGET_MAX) {
+        log(`Worker exited (code ${code}) ${this.recentRestartsAt.length} times in ${RESTART_BUDGET_WINDOW_MS / 60_000} min — giving up`, Colors.RED);
+        AlertService.notify("critical", "collectors-crash-loop", `collector worker restarted ${this.recentRestartsAt.length} times in ${RESTART_BUDGET_WINDOW_MS / 60_000} min; no longer restarting`);
+        return;
+      }
+
       log(`Worker exited (code ${code}), restarting in ${RESTART_DELAY_MS / 1000}s`, Colors.RED);
+      AlertService.notify("warning", "collectors-restart", `collector worker exited (code ${code}) and is restarting`);
       setTimeout(() => !this.stopping && this.spawn(), RESTART_DELAY_MS);
     });
   }

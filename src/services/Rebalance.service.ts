@@ -3,6 +3,9 @@ import path from "path";
 
 import cryptoConfig from "../config/crypto.config";
 import MarketDataService from "./collectors/MarketData.service";
+import ExecutionService from "./execution/ExecutionService";
+import HealthService from "./HealthService";
+import AlertService from "./AlertService";
 import { CryptoBase, CryptoPairs } from "../types/basic.types";
 import { Colors, createLogger } from "../utils/colored-console";
 import {
@@ -139,15 +142,22 @@ class RebalanceService {
 
   public check = async (pair: CryptoPairs = CryptoPairs.ETH_USDT): Promise<void> => {
     if (fs.existsSync(this.stopFile)) {
-      log(`STOPPED: ${fs.readFileSync(this.stopFile, "utf-8").trim() || "by hand"}. Delete ${this.stopFile} to resume`, Colors.RED);
+      const reason = fs.readFileSync(this.stopFile, "utf-8").trim() || "by hand";
+      log(`STOPPED: ${reason}. Delete ${this.stopFile} to resume`, Colors.RED);
+      HealthService.recordStop(reason);
+      AlertService.notify("critical", "stop-crane", `Trading stopped: ${reason}`);
       return;
     }
+    HealthService.recordStop(null);
 
     const price = await MarketDataService.getCurrentPrice(CryptoBase.ETH, CryptoBase.USDT);
     if (!price || !(price > 0)) {
       log("no current ETH price, check skipped", Colors.YELLOW);
+      AlertService.notify("critical", "no-price", "no current ETH price for the rebalance check");
       return;
     }
+    HealthService.recordPrice();
+    HealthService.recordRebalanceCheck();
     const now = Date.now();
     const pct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
 
@@ -177,8 +187,13 @@ class RebalanceService {
           `(cost ${trade.cost.toFixed(2)} USDT), ETH share back to ${(ethShare(portfolio, price) * 100).toFixed(1)}%`,
         Colors.GREEN
       );
+      await ExecutionService.execute(pair, trade, price);
+      HealthService.recordFill();
     }
-    if (stop) log(`STOP-CRANE: ${stop}. Trading is stopped until ${this.stopFile} is deleted`, Colors.RED);
+    if (stop) {
+      log(`STOP-CRANE: ${stop}. Trading is stopped until ${this.stopFile} is deleted`, Colors.RED);
+      AlertService.notify("critical", "stop-crane", `Stop-crane fired: ${stop}`);
+    }
 
     const value = portfolioValue(portfolio, price);
     const { buyAt, sellAt } = bandPrices(portfolio, this.config);

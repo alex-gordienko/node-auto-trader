@@ -5,7 +5,7 @@ import { TransactionResponse } from "ethers";
 
 import { CandleTimeframe, IMarketCandle, MarketSymbol } from "../types/marketData.types";
 import cryptoConfig from "../config/crypto.config";
-import { log, Colors } from "../utils/colored-console";
+import { log, Colors, logError } from "../utils/colored-console";
 import {
   ICryproExchangeWalletHistory,
   ICryptoExchangeSwapResponse,
@@ -273,8 +273,7 @@ class LocalStorageService {
 
       return this.uploadFile(fileName, JSON.stringify(Array.from(savedDataMap)));
     } catch (error) {
-      log("Error while pushing transaction history", Colors.RED);
-      log(error, Colors.RED);
+      logError("Error while pushing transaction history", error);
       return null;
     }
   };

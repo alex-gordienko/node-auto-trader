@@ -8,7 +8,7 @@ import { TransferTransaction } from "@waves/ts-types";
 
 import config from "../config/digitalOcean.config";
 import { IMarketCandle as ICyptoCompareData } from "../types/marketData.types";
-import { log, Colors } from "../utils/colored-console";
+import { log, Colors, logError } from "../utils/colored-console";
 import {
   ICryproExchangeWalletHistory,
   ICryptoExchangeResponse,
@@ -273,8 +273,7 @@ class DigitalOceanStorageService {
 
       return this.uploadFile(bucketName, input);
     } catch (error) {
-      log("Error while pushing transaction history", Colors.RED);
-      log(error, Colors.RED);
+      logError("Error while pushing transaction history", error);
       return null;
     }
   };

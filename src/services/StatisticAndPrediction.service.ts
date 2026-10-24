@@ -6,7 +6,7 @@ import TensorflowService from "./Tensorflow.service";
 import RebalanceService from "./Rebalance.service";
 
 import cryptoConfig from "../config/crypto.config";
-import { Colors, log } from "../utils/colored-console";
+import { Colors, log, logError } from "../utils/colored-console";
 import repeatEvent from "../utils/timer";
 import { CryptoBase, CryptoPairs } from "../types/basic.types";
 import { ICryproExchangeWalletHistory } from "../types/cryptoExchange.types";
@@ -206,8 +206,8 @@ class StatisticAndPredictionService {
           return;
         }
 
-        if (!balanceETH) {
-          log(`Cannot get current balance for ETH (${balanceETH})`, Colors.RED);
+        if (balanceETH === null) {
+          log(`Cannot get current balance for ETH (lookup failed)`, Colors.RED);
           return;
         }
 
@@ -251,8 +251,7 @@ class StatisticAndPredictionService {
 
       log(message);
     } catch (error) {
-      log("Error while calculating wallet statistics", Colors.RED);
-      log(error, Colors.RED);
+      logError("Error while calculating wallet statistics", error);
     }
   };
 }

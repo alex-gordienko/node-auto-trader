@@ -230,6 +230,12 @@ const cryptoConfig = {
     liveSampleShare: Number(process.env.RL_LIVE_SAMPLE_SHARE || 0.25),
   },
 
+  // Order placement venue (src/services/execution). "paper" is a no-op fill, today's only supported mode; "live"
+  // is rejected until BinanceSpotVenue is implemented (TRA-16 P1) — see ExecutionService.
+  execution: {
+    mode: (process.env.EXECUTION_MODE || "paper") as "paper" | "live",
+  },
+
   // Trading strategy: 50/50 rebalancing (utils/rebalance.ts) — paper trading only, no real swaps. Costs per swap are
   // the rl.feeRate + rl.gasUsd above. `yarn rebalance:backtest` on ETH 2017-08…2026-10 (2026-10-21): wider bands win
   // because every swap costs ~1.8% (±5 → 21%/yr, ±10 → 24–25%, ±15 → 27%, ±20 → 28–29%; buy & hold 25.6%, drawdown

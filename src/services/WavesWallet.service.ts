@@ -7,9 +7,9 @@ import {
 } from "@waves/waves-transactions";
 import https from "https";
 import { TransferTransaction } from "@waves/ts-types";
-import { log, Colors } from "../utils/colored-console";
+import { log, Colors, logError } from "../utils/colored-console";
 import cryptoConfig from "../config/crypto.config";
-import axios, { AxiosError } from "axios";
+import axios from "axios";
 
 const agent = new https.Agent({
   rejectUnauthorized: false,
@@ -52,8 +52,7 @@ class WavesWalletService {
 
       return balance / Math.pow(10, 8);
     } catch (error) {
-      log('Error while get Waves balance', Colors.RED);
-      log(error, Colors.RED);
+      logError('Error while get Waves balance', error);
       return 0;
     }
   };
@@ -77,13 +76,7 @@ class WavesWalletService {
       log(`[***] Transaction successfully sent. TX hash: ${response.data.id}`, Colors.CYAN);
       return response.data;
     } catch (error) {
-      log(`Error while sending coins`, Colors.RED);
-
-      if (error instanceof AxiosError) {
-        log(error.response?.data, Colors.RED);
-      } else {
-        log(error, Colors.RED);
-      }
+      logError(`Error while sending coins`, error);
       return null;
     }
   };

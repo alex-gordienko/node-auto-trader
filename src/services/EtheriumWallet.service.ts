@@ -1,6 +1,6 @@
 import * as Ethers from "ethers";
 import cryptoConfig from "../config/crypto.config";
-import { log, Colors } from "../utils/colored-console";
+import { log, Colors, logError } from "../utils/colored-console";
 
 /**
  * The signer is built on first use, not at import. This module is pulled in transitively by the storage services
@@ -30,10 +30,6 @@ class EtheriumWallet {
     return this.wallet.address;
   }
 
-  public getPrivateKey(): string {
-    return this.wallet.privateKey;
-  }
-
   public sendCoins = async (walletTo: string, amount: number): Promise<Ethers.ethers.TransactionResponse | null> => {
     try {
       const tx = await this.wallet.sendTransaction({
@@ -45,23 +41,23 @@ class EtheriumWallet {
       log(`[***] Transaction successfully sent. TX hash: ${tx.hash}`, Colors.CYAN);
       return tx;
     } catch (error) {
-      log(`Error while sending coins`, Colors.RED);
-      log(error, Colors.RED);
+      logError(`Error while sending coins`, error);
       return null;
     }
   };
 
-  public getBalance = async (): Promise<number> => {
+  /** null means the lookup failed — distinct from a real zero balance, which callers must not treat the same way. */
+  public getBalance = async (): Promise<number | null> => {
     try {
       if (this.wallet.provider) {
         const balance = await this.wallet.provider?.getBalance(this.wallet.address);
 
         return Number(this.convertBigIntToETH(balance));
       }
-      return 0;
+      return null;
     } catch (error) {
-      log(`Error while get ETH balance: ${error}`, Colors.RED);
-      return 0;
+      logError(`Error while get ETH balance`, error);
+      return null;
     }
   };
 

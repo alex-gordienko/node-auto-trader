@@ -1,6 +1,6 @@
 import axios, { AxiosError } from "axios";
 import cryptoConfig from "../config/crypto.config";
-import { log, Colors } from "../utils/colored-console";
+import { log, Colors, logError } from "../utils/colored-console";
 import WavesWalletService from "./WavesWallet.service";
 import EtheriumWalletService from "./EtheriumWallet.service";
 import { CryptoBase, CryptoExchangeCoins } from "../types/basic.types";
@@ -126,8 +126,7 @@ class CryptoExchangeService {
         ethTransaction: transaction,
       };
     } catch (error) {
-      log(`Error changing ${from} to ${to}`, Colors.RED);
-      log(error, Colors.RED);
+      logError(`Error changing ${from} to ${to}`, error);
       return null;
     }
   };
