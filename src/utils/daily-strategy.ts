@@ -9,6 +9,90 @@ export interface IDailyBar {
   price: number; // ETH price at t
 }
 
+// trend lookbacks in days: no single one is picked, they vote (30d alone is a lucky peak among them)
+export const TREND_LOOKBACKS = [10, 14, 21, 30, 45, 60, 90, 120];
+
+/** Share of TREND_LOOKBACKS whose price is below the close of day k; `closes` are daily, oldest first. NaN without history. */
+export const trendVote = (closes: number[], k = closes.length - 1): number =>
+  k >= TREND_LOOKBACKS[TREND_LOOKBACKS.length - 1]
+    ? TREND_LOOKBACKS.filter((days) => closes[k] > closes[k - days]).length / TREND_LOOKBACKS.length
+    : NaN;
+
+/** Annualized volatility of the 30 daily returns up to day k; NaN without history. */
+export const realizedVolatility = (closes: number[], k = closes.length - 1): number => {
+  if (k < 30) return NaN;
+  let sum = 0;
+  for (let j = k - 29; j <= k; j++) sum += Math.log(closes[j] / closes[j - 1]) ** 2;
+  return Math.sqrt((sum / 30) * 365);
+};
+
+/** Wanted coin share: the trend vote, scaled down when the coin is more volatile than `targetVolatility`. */
+export const voteTarget = (closes: number[], targetVolatility: number, k = closes.length - 1): number =>
+  trendVote(closes, k) * Math.min(1, targetVolatility / realizedVolatility(closes, k));
+
+/** Daily bars at 00:00 UTC from hourly candles (`time` = candle start, unix seconds): a close is known when its candle ends. */
+export const toDailyBars = (candles: { time: number; close: number }[]): IDailyBar[] => {
+  const times = candles.map((c) => c.time + 3600);
+  const bars: IDailyBar[] = [];
+  for (let t = Math.ceil(times[0] / 86400) * 86400; t <= times[times.length - 1]; t += 86400) {
+    let lo = 0;
+    let hi = times.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (times[mid] <= t) lo = mid;
+      else hi = mid - 1;
+    }
+    bars.push({ t, price: candles[lo].close });
+  }
+  return bars;
+};
+
+/** One coin's half of the live paper portfolio: traded on its own like a half in `simulate`. */
+export interface IPaperLeg {
+  qty: number; // coin
+  usdt: number;
+  flow: number; // USDT received from sells minus USDT spent on buys since the position was opened
+}
+
+export interface IPaperFill {
+  side: "buy" | "sell";
+  price: number; // fill price, slippage included
+  usd: number; // traded amount at the market price, before costs
+  fee: number; // USDT
+  opened: boolean; // the leg was out of the market before
+  closedPnl: number | null; // set when the leg left the market: the position's result net of all costs
+}
+
+export interface IPaperCosts {
+  feeRate: number; // share of the traded amount
+  slippage: number; // fills are this much worse than the market price
+  minChange: number; // as in ISimConfig
+  minTradeUsd: number;
+}
+
+/** Trades the leg to `target` coin share at market `price`, with the same "is it worth it" rule as `simulate`. Pure. */
+export const rebalanceLeg = (leg: IPaperLeg, price: number, target: number, c: IPaperCosts): { leg: IPaperLeg; fill: IPaperFill | null } => {
+  const value = leg.qty * price + leg.usdt;
+  const share = value > 0 ? (leg.qty * price) / value : 0;
+  const wanted = Math.min(1, Math.max(0, target));
+  const change = Math.abs(wanted - share);
+  const usd = wanted === 0 ? leg.qty * price : change * value;
+  if (change < 1e-9 || (change < c.minChange && wanted !== 0) || usd < c.minTradeUsd) return { leg, fill: null };
+  if (wanted > share) {
+    const fillPrice = price * (1 + c.slippage);
+    const fee = usd * c.feeRate;
+    const opened = leg.qty === 0;
+    const next = { qty: leg.qty + (usd - fee) / fillPrice, usdt: leg.usdt - usd, flow: (opened ? 0 : leg.flow) - usd };
+    return { leg: next, fill: { side: "buy", price: fillPrice, usd, fee, opened, closedPnl: null } };
+  }
+  const fillPrice = price * (1 - c.slippage);
+  const qty = wanted === 0 ? leg.qty : usd / price;
+  const received = qty * fillPrice;
+  const fee = received * c.feeRate;
+  const next = { qty: wanted === 0 ? 0 : leg.qty - qty, usdt: leg.usdt + received - fee, flow: leg.flow + received - fee };
+  return { leg: next, fill: { side: "sell", price: fillPrice, usd, fee, opened: false, closedPnl: wanted === 0 ? next.flow : null } };
+};
+
 export interface IGuardConfig {
   lossesInARow: number; // closed positions with a loss, in a row
   maxDrawdown: number; // share of the peak value since the last resume

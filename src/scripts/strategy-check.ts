@@ -11,15 +11,12 @@ import fse from "fs-extra";
 
 import cryptoConfig from "../config/crypto.config";
 import StorageService from "../services/Local.storage.service";
-import { IMarketCandle } from "../types/marketData.types";
-import { lastIndexAtOrBefore } from "../utils/tensorflow.helpers";
 import { createLogger, Colors } from "../utils/colored-console";
-import { IDailyBar, IGuardConfig, simulate, stats } from "../utils/daily-strategy";
+import { IDailyBar, IGuardConfig, realizedVolatility, simulate, stats, toDailyBars, trendVote, voteTarget } from "../utils/daily-strategy";
 
 const log = createLogger("strategy-check");
 
 const DAY = 86400;
-const HOUR = 3600;
 const FIRST_TEST_DAY = Date.UTC(2019, 0, 1) / 1000;
 const SPLIT_DAY = Date.UTC(2023, 0, 1) / 1000;
 // Binance spot fee + spread, and the current bot (ChangeNow + Ethereum gas)
@@ -49,32 +46,21 @@ const dailyBars = async (symbol: "ETH-USDT" | "BTC-USDT"): Promise<IDailyBar[]> 
   if (!candles.length || candles[0].time > FIRST_TEST_DAY - 200 * DAY) {
     throw new Error(`Needs hourly ${symbol} since mid-2018 in ${cryptoConfig.paths.storageDir}: run the backfill from the header`);
   }
-  // a close is known when its candle ends
-  const times = candles.map((c: IMarketCandle) => c.time + HOUR);
-  const closes = candles.map((c) => c.close);
-  const bars: IDailyBar[] = [];
-  for (let t = Math.ceil(times[0] / DAY) * DAY; t <= times[times.length - 1]; t += DAY) bars.push({ t, price: closes[lastIndexAtOrBefore(times, t)] });
-  return bars;
+  return toDailyBars(candles);
 };
 
 /** The signals of one coin, from prices known at each decision. */
 const signalsOf = (bars: IDailyBar[]) => {
   const trend = (days: number) => bars.map((b, k) => (k >= days ? Number(b.price > bars[k - days].price) : NaN));
-  const volatility = bars.map((_, k) => {
-    if (k < 30) return NaN;
-    let sum = 0;
-    for (let j = k - 29; j <= k; j++) sum += Math.log(bars[j].price / bars[j - 1].price) ** 2;
-    return Math.sqrt((sum / 30) * 365);
-  });
+  const closes = bars.map((b) => b.price);
+  const volatility = bars.map((_, k) => realizedVolatility(closes, k));
   const t21 = trend(21);
   const t30 = trend(30);
   const t45 = trend(45);
   const vote = bars.map((_, k) => (t21[k] + t30[k] + t45[k]) / 3);
-  // every lookback votes: 30d alone is a peak among its neighbours (14–120d), the vote does not depend on picking it
-  const lookbacks = [10, 14, 21, 30, 45, 60, 90, 120].map(trend);
-  const voteAll = bars.map((_, k) => (k >= 120 ? mean(lookbacks.map((t) => t[k])) : NaN));
+  const voteAll = bars.map((_, k) => trendVote(closes, k));
   const volSized = (signal: number[]) => signal.map((s, k) => s * Math.min(1, TARGET_VOLATILITY / volatility[k]));
-  return { hold: bars.map(() => 1), t30, vote, voteAll, t30Vol: volSized(t30), voteVol: volSized(vote) };
+  return { hold: bars.map(() => 1), t30, vote, voteAll, voteAllVol: bars.map((_, k) => voteTarget(closes, TARGET_VOLATILITY, k)), t30Vol: volSized(t30), voteVol: volSized(vote) };
 };
 type SignalName = keyof ReturnType<typeof signalsOf>;
 
@@ -102,6 +88,7 @@ type SignalName = keyof ReturnType<typeof signalsOf>;
     { name: "50/50 trend 30d, 3d", coins: ["ETH", "BTC"], signal: "t30", step: 3, minChange: 0 },
     { name: "50/50 trend 30d, 1d", coins: ["ETH", "BTC"], signal: "t30", step: 1, minChange: 0 },
     { name: "50/50 vote 10–120d, 3d", coins: ["ETH", "BTC"], signal: "voteAll", step: 3, minChange: 0.25 },
+    { name: "50/50 vote + vol size", coins: ["ETH", "BTC"], signal: "voteAllVol", step: 3, minChange: 0.25 },
     { name: "50/50 trend + vol, 3d", coins: ["ETH", "BTC"], signal: "t30Vol", step: 3, minChange: 0.2 },
     { name: "50/50 vote + vol, 3d", coins: ["ETH", "BTC"], signal: "voteVol", step: 3, minChange: 0.2 },
   ];

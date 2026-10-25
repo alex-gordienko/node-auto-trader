@@ -4,6 +4,7 @@ import DigitalOceanStorageService from "./Local.storage.service";
 import EtheriumWalletService from "./EtheriumWallet.service";
 import TensorflowService from "./Tensorflow.service";
 import RebalanceService from "./Rebalance.service";
+import VoteTraderService from "./VoteTrader.service";
 
 import cryptoConfig from "../config/crypto.config";
 import { Colors, log } from "../utils/colored-console";
@@ -27,7 +28,7 @@ class StatisticAndPredictionService {
 
   private walletETHtimer: NodeJS.Timeout | null = null;
 
-  // timer of the 50/50 strategy (paper trading)
+  // timer of the trend-vote strategy (paper trading)
   private rebalanceTimer: NodeJS.Timeout | null = null;
 
   constructor() {
@@ -175,11 +176,11 @@ class StatisticAndPredictionService {
     });
   };
 
-  /** 50/50 rebalancing on paper: checked at start and every rebalance.checkMinutes; errors never stop the server. */
+  /** The BTC + ETH trend vote on paper: checked at start and every vote.checkMinutes; errors never stop the server. */
   private autoRebalance = () => {
-    const { checkMinutes, band } = cryptoConfig.rebalance;
-    log(`[**] 50/50 strategy (paper): ETH share checked every ${checkMinutes} min, rebalanced outside 50% ± ${band * 100}%`, Colors.CYAN);
-    const check = () => RebalanceService.check().catch((error) => log(`[**] Rebalance check failed: ${error}`, Colors.RED));
+    const { checkMinutes, stepDays } = cryptoConfig.vote;
+    log(`[**] BTC+ETH trend vote (paper): checked every ${checkMinutes} min, decided every ${stepDays} days after 00:00 UTC`, Colors.CYAN);
+    const check = () => VoteTraderService.check().catch((error) => log(`[**] Vote check failed: ${error}`, Colors.RED));
     check();
     this.rebalanceTimer = repeatEvent({ callback: check, units: "minutes", interval: checkMinutes });
   };
