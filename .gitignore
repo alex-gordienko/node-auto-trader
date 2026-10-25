@@ -134,3 +134,6 @@ dist
 .firebase
 
 src/Storage/
+
+# Graphify knowledge graph (generated locally)
+graphify-out/
