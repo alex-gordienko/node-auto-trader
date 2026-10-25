@@ -20,7 +20,8 @@
     "features:report": "MODELS_DIR=\"$PWD/src/Storage/features-report/models\" NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/features-report.ts",
     "backtest:orderflow": "NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/orderflow-backtest.ts",
     "signal:orderflow": "NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/orderflow-signal.ts",
-    "rebalance:backtest": "ts-node --transpile-only src/scripts/rebalance-backtest.ts"
+    "rebalance:backtest": "ts-node --transpile-only src/scripts/rebalance-backtest.ts",
+    "testnet": "STORAGE_DIR=\"$PWD/src/Storage/testnet\" ts-node --transpile-only src/scripts/testnet-trade.ts"
   },
   "dependencies": {
     "@tensorflow/tfjs": "4.22.0",
