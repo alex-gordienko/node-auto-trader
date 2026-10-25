@@ -6,6 +6,7 @@ import TensorflowService from "./Tensorflow.service";
 import RebalanceService from "./Rebalance.service";
 import VoteTraderService from "./VoteTrader.service";
 import HorizonTraderService from "./HorizonTrader.service";
+import BinanceExecutionService from "./BinanceExecution.service";
 
 import cryptoConfig from "../config/crypto.config";
 import { Colors, log } from "../utils/colored-console";
@@ -37,6 +38,7 @@ class StatisticAndPredictionService {
 
   constructor() {
     this.autoUpdateDatasets();
+    this.logExecution();
     this.autoRebalance();
     this.autoHorizon();
     this.autoLogWalletBalances();
@@ -191,6 +193,19 @@ class StatisticAndPredictionService {
     const check = () => VoteTraderService.check().catch((error) => log(`[**] Vote check failed: ${error}`, Colors.RED));
     check();
     this.rebalanceTimer = repeatEvent({ callback: check, units: "minutes", interval: checkMinutes });
+  };
+
+  /** EXECUTION_MODE=testnet: says where orders go and what the account holds; a refused URL or missing keys are shown here. */
+  private logExecution = async () => {
+    if (!BinanceExecutionService.enabled) return log(`[**] Execution: paper only (EXECUTION_MODE=paper), no orders are sent`, Colors.CYAN);
+    const refused = BinanceExecutionService.refusal();
+    if (refused) return log(`[**] Execution: testnet orders are OFF — ${refused}`, Colors.RED);
+    try {
+      const b = await BinanceExecutionService.balances(["USDT", "BTC", "ETH", "BNB"]);
+      log(`[**] Execution: paper fills are mirrored on ${cryptoConfig.execution.baseUrl} (${cryptoConfig.execution.orderType}); free ${Object.entries(b).map(([a, v]) => `${a} ${v}`).join(", ")}`, Colors.CYAN);
+    } catch (error) {
+      log(`[**] Execution: testnet account not reachable: ${error}`, Colors.RED);
+    }
   };
 
   /** The horizon-search candidates on paper: checked at start and every horizon.checkMinutes; errors never stop the server. */
