@@ -5,6 +5,7 @@ import EtheriumWalletService from "./EtheriumWallet.service";
 import TensorflowService from "./Tensorflow.service";
 import RebalanceService from "./Rebalance.service";
 import VoteTraderService from "./VoteTrader.service";
+import HorizonTraderService from "./HorizonTrader.service";
 
 import cryptoConfig from "../config/crypto.config";
 import { Colors, log } from "../utils/colored-console";
@@ -31,9 +32,13 @@ class StatisticAndPredictionService {
   // timer of the trend-vote strategy (paper trading)
   private rebalanceTimer: NodeJS.Timeout | null = null;
 
+  // timer of the horizon-search candidates (paper trading)
+  private horizonTimer: NodeJS.Timeout | null = null;
+
   constructor() {
     this.autoUpdateDatasets();
     this.autoRebalance();
+    this.autoHorizon();
     this.autoLogWalletBalances();
 
     if (!cryptoConfig.modelsEnabled) {
@@ -72,6 +77,9 @@ class StatisticAndPredictionService {
     }
     if (this.rebalanceTimer) {
       clearInterval(this.rebalanceTimer);
+    }
+    if (this.horizonTimer) {
+      clearInterval(this.horizonTimer);
     }
   };
 
@@ -183,6 +191,16 @@ class StatisticAndPredictionService {
     const check = () => VoteTraderService.check().catch((error) => log(`[**] Vote check failed: ${error}`, Colors.RED));
     check();
     this.rebalanceTimer = repeatEvent({ callback: check, units: "minutes", interval: checkMinutes });
+  };
+
+  /** The horizon-search candidates on paper: checked at start and every horizon.checkMinutes; errors never stop the server. */
+  private autoHorizon = () => {
+    const { enabled, checkMinutes, tracks } = cryptoConfig.horizon;
+    if (!enabled) return;
+    log(`[**] Horizon candidates (paper): ${tracks.map((t) => t.name).join(", ")}, checked every ${checkMinutes} min`, Colors.CYAN);
+    const check = () => HorizonTraderService.check().catch((error) => log(`[**] Horizon check failed: ${error}`, Colors.RED));
+    check();
+    this.horizonTimer = repeatEvent({ callback: check, units: "minutes", interval: checkMinutes });
   };
 
   private autoLogWalletBalances = async () => {

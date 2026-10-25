@@ -134,3 +134,8 @@ dist
 .firebase
 
 src/Storage/
+# horizon research: downloaded market data and exported models (rebuilt by research/horizon/*.py)
+research/horizon/data/
+src/models/horizon/
+research/horizon/.venv
+__pycache__/
