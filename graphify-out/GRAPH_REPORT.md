@@ -1,22 +1,29 @@
-# Graph Report - node-auto-trader  (2026-10-20)
+# Graph Report - node-auto-trader  (2026-10-25)
 
 ## Corpus Check
-- Corpus is ~32,206 words - fits in a single context window. You may not need a graph.
+- 94 files · ~57,885 words
+- Verdict: corpus is large enough that graph structure adds value.
+- Unclassified: 11 file(s) not represented in the graph (top: (none) 5, .bin 3, .css 2)
 
 ## Summary
-- 640 nodes · 1434 edges · 26 communities (22 shown, 4 thin omitted)
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 11 edges (avg confidence: 0.85)
+- 942 nodes · 2168 edges · 49 communities (37 shown, 12 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 18 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
+## Graph Freshness
+- Built from commit: `a44f84aa`
+- Run `git rev-parse HEAD` and compare to check if the graph is stale.
+- Run `graphify update .` after code changes (no API cost).
+
 ## Community Hubs (Navigation)
-- Binance Stream Collectors
-- Features & Indicators
+- Colors
+- tensorflow.helpers.ts
 - Exchange & Storage Services
-- App Bootstrap & Utils
+- TensorflowAI
 - Binance REST Market Data
-- DQN Training (TensorflowAI)
+- CryptoPairs
 - Root Package Meta
-- Backtest & Feature Reports
+- backtest.ts
 - Dashboard Dependencies
 - Dashboard Charts Deps
 - Runtime Dependencies
@@ -34,76 +41,89 @@
 - Dashboard S3 Config
 - Dashboard ESLint
 - Browserslist
-- Dashboard Test Setup
+- strategy-check.ts
+- .predictNextPrices
+- daily-horizon.ts
+- Tensorflow.service.ts
+- BinanceStreamCollector
+- OrderFlow.service.ts
+- testnet-trade.ts
+- rebalance-backtest.ts
+- .trainForecast
+- technical-indicators.ts
+- orderflow-backtest.ts
+- Learn More
+- OrderFlowSeconds
+- orderflow-signal.ts
+- features-report.ts
+- tfjs-node-compat.ts
+- backlog.md
+- status.md
 
 ## God Nodes (most connected - your core abstractions)
-1. `log()` - 61 edges
-2. `TensorflowAI` - 49 edges
-3. `CryptoPairs` - 31 edges
-4. `Colors` - 30 edges
-5. `cryptoConfig` - 26 edges
-6. `BinanceStreamCollector` - 19 edges
-7. `MarketDataService` - 18 edges
-8. `LocalStorageService` - 16 edges
-9. `MarketSymbol` - 15 edges
-10. `createLogger()` - 15 edges
+1. `log()` - 62 edges
+2. `TensorflowAI` - 50 edges
+3. `CryptoPairs` - 45 edges
+4. `Colors` - 42 edges
+5. `cryptoConfig` - 38 edges
+6. `createLogger()` - 27 edges
+7. `BinanceStreamCollector` - 20 edges
+8. `MarketDataService` - 20 edges
+9. `OrderFlowService` - 17 edges
+10. `scripts` - 16 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `initApp()` --calls--> `log()`  [EXTRACTED]
   index.ts → src/utils/colored-console.ts
 - `shutdown()` --calls--> `log()`  [EXTRACTED]
   index.ts → src/utils/colored-console.ts
+- `IOrderFlowMetrics` --references--> `IOutputCalibration`  [EXTRACTED]
+  src/services/OrderFlow.service.ts → src/utils/tensorflow.helpers.ts
+- `IFuturesContext` --references--> `IFuturesMetrics`  [EXTRACTED]
+  src/utils/tensorflow.helpers.ts → src/types/marketData.types.ts
 - `runFold()` --calls--> `log()`  [EXTRACTED]
   src/scripts/backtest.ts → src/utils/colored-console.ts
-- `ITransactionHistoryETHProps` --references--> `CryptoBase`  [EXTRACTED]
-  src/services/DigitalOcean.storage.service.ts → src/types/basic.types.ts
-- `ITransactionHistoryWAVESProps` --references--> `CryptoBase`  [EXTRACTED]
-  src/services/DigitalOcean.storage.service.ts → src/types/basic.types.ts
 
 ## Import Cycles
 - None detected.
 
-## Communities (26 total, 4 thin omitted)
+## Communities (49 total, 12 thin omitted)
 
-### Community 0 - "Binance Stream Collectors"
-Cohesion: 0.05
-Nodes (45): axios, cryptoConfig, hourDays, minuteDays, BinanceKline, INTERVAL, METRIC_FIELDS, STEP_SECONDS (+37 more)
+### Community 0 - "Colors"
+Cohesion: 0.06
+Nodes (64): axios, dotenv, ethers, express, @waves/waves-transactions, cryptoConfig, digitalOceanConfig, routes (+56 more)
 
-### Community 1 - "Features & Indicators"
-Cohesion: 0.05
-Nodes (82): ITransition, buildInferenceState(), DQN_FEATURE_COUNT, EMPTY_FORECAST, IEnvStepResult, RL_ACTION_LABELS, RLAction, RLActionIndex (+74 more)
+### Community 1 - "tensorflow.helpers.ts"
+Cohesion: 0.10
+Nodes (29): buildForecastSamples(), buildGapChecker(), buildHourlyContext(), CONTEXT_FEATURE_COUNT, evaluateLivePredictions(), EXTERNAL_FEATURE_COUNT, externalFeaturesAt(), featureWindow() (+21 more)
 
 ### Community 2 - "Exchange & Storage Services"
 Cohesion: 0.06
-Nodes (10): CryptoExchangeService, DigitalOceanStorageService, EtheriumWallet, LocalStorageService, StatisticAndPredictionService, WavesWalletService, log(), mapIntevaltoMilliseconds() (+2 more)
-
-### Community 3 - "App Bootstrap & Utils"
-Cohesion: 0.07
-Nodes (37): initApp(), dotenv, ethers, express, @waves/waves-transactions, digitalOceanConfig, routes, ITransactionHistoryETHProps (+29 more)
+Nodes (11): initApp(), CryptoExchangeService, DigitalOceanStorageService, EtheriumWallet, LocalStorageService, StatisticAndPredictionService, WavesWalletService, log() (+3 more)
 
 ### Community 4 - "Binance REST Market Data"
-Cohesion: 0.08
-Nodes (14): BinanceClient, log, BinanceMarketDataService, log, DvolCollector, log, FearGreedCollector, log (+6 more)
+Cohesion: 0.06
+Nodes (18): BinanceClient, log, BinanceMarketDataService, log, CoinbaseCollector, log, sleep(), DvolCollector (+10 more)
 
-### Community 5 - "DQN Training (TensorflowAI)"
-Cohesion: 0.09
-Nodes (9): ReplayBuffer, TensorflowAI, CryptoPairs, ETH_USDT, ITensorflowPrediction, IMarketDataset, argmax(), IFeatureScaler (+1 more)
+### Community 5 - "CryptoPairs"
+Cohesion: 0.16
+Nodes (6): IOrderFlowBundle, log, OrderFlowService, CryptoPairs, ETH_USDT, correlationT()
 
 ### Community 6 - "Root Package Meta"
 Cohesion: 0.07
-Nodes (27): author, description, aws-sdk, date-fns, license, main, name, private (+19 more)
+Nodes (26): author, description, aws-sdk, date-fns, license, main, name, private (+18 more)
 
-### Community 7 - "Backtest & Feature Reports"
-Cohesion: 0.09
-Nodes (22): fs-extra, Action, COSTS, cut(), EVAL_DAYS, fmt(), HISTORY_DAYS, ICost (+14 more)
+### Community 7 - "backtest.ts"
+Cohesion: 0.08
+Nodes (41): Action, COSTS, cut(), EVAL_DAYS, fmt(), guardedDqn(), HISTORY_DAYS, ICost (+33 more)
 
 ### Community 8 - "Dashboard Dependencies"
 Cohesion: 0.09
 Nodes (23): dependencies, add, ag-charts-community, ag-charts-enterprise, ag-charts-react, aws-sdk, @aws-sdk/client-s3, date-fns (+15 more)
 
 ### Community 9 - "Dashboard Charts Deps"
-Cohesion: 0.11
-Nodes (17): add, ag-charts-community, ag-charts-enterprise, ag-charts-react, @emotion/cache, @emotion/react, @emotion/styled, http-proxy-middleware (+9 more)
+Cohesion: 0.10
+Nodes (18): add, ag-charts-community, ag-charts-enterprise, ag-charts-react, @emotion/cache, @emotion/react, @emotion/styled, http-proxy-middleware (+10 more)
 
 ### Community 10 - "Runtime Dependencies"
 Cohesion: 0.12
@@ -113,9 +133,13 @@ Nodes (16): dependencies, adm-zip, aws-sdk, axios, date-fns, dotenv, ethers, exp
 Cohesion: 0.13
 Nodes (15): devDependencies, cross-env, eslint, @eslint/js, globals, nodemon, ts-node, @types/adm-zip (+7 more)
 
+### Community 12 - "RL Trading Environment"
+Cohesion: 0.16
+Nodes (4): ITransition, ReplayBuffer, TradingEnvironment, ILiveFeedback
+
 ### Community 13 - "NPM Scripts"
-Cohesion: 0.17
-Nodes (12): scripts, backfill:binance, backtest, build, collect:stats, dev, features:report, lint (+4 more)
+Cohesion: 0.12
+Nodes (16): scripts, backfill:binance, backtest, backtest:orderflow, build, collect:stats, dev, features:report (+8 more)
 
 ### Community 14 - "TypeScript Config"
 Cohesion: 0.17
@@ -134,7 +158,7 @@ Cohesion: 0.25
 Nodes (7): background_color, display, icons, name, short_name, start_url, theme_color
 
 ### Community 19 - "Collectors Supervisor"
-Cohesion: 0.47
+Cohesion: 0.38
 Nodes (3): shutdown(), CollectorsService, log
 
 ### Community 20 - "Dashboard Scripts"
@@ -153,25 +177,85 @@ Nodes (4): react-app, react-app/jest, eslintConfig, extends
 Cohesion: 0.67
 Nodes (3): browserslist, development, production
 
+### Community 25 - "strategy-check.ts"
+Cohesion: 0.06
+Nodes (40): COSTS, dailyBars(), GUARDS, hourly, IStrategy, log, SignalName, signalsOf() (+32 more)
+
+### Community 26 - ".predictNextPrices"
+Cohesion: 0.16
+Nodes (7): IForecastPath, ITensorflowPrediction, IMarketDataset, argmax(), buildExternalContext(), buildFuturesContext(), toOHLCV()
+
+### Community 27 - "daily-horizon.ts"
+Cohesion: 0.10
+Nodes (25): backtest(), COIN_FEATURES, coinFeatures(), COSTS, FEATURES, featuresAt(), FUNDING, HORIZONS (+17 more)
+
+### Community 28 - "Tensorflow.service.ts"
+Cohesion: 0.15
+Nodes (18): buildInferenceState(), DQN_FEATURE_COUNT, EMPTY_FORECAST, IEnvStepResult, RL_ACTION_LABELS, RLAction, RLActionIndex, SIGNAL_COUNT (+10 more)
+
+### Community 29 - "BinanceStreamCollector"
+Cohesion: 0.09
+Nodes (11): BinanceStreamCollector, DeribitOptionsRecorder, log, LiquidationsCollector, OrderBookCollector, RollingGzipWriter, acquireLock(), ICollectorsHandle (+3 more)
+
+### Community 30 - "OrderFlow.service.ts"
+Cohesion: 0.15
+Nodes (16): @tensorflow/tfjs-node, flows, handle, IOrderFlowMetrics, DepthRow, IBook, IFlow, ILiquidations (+8 more)
+
+### Community 31 - "testnet-trade.ts"
+Cohesion: 0.22
+Nodes (19): buyLeg(), decide(), drill(), floorToStep(), ILeg, LEG_USD, log, LOOKBACKS (+11 more)
+
+### Community 32 - "rebalance-backtest.ts"
+Cohesion: 0.19
+Nodes (17): BANDS, CHECK_HOURS, config, IRun, log, NO_STOPS, run(), selfCheck() (+9 more)
+
+### Community 33 - ".trainForecast"
+Cohesion: 0.19
+Nodes (12): applyColumnScaler(), computeOutputErrors(), correlation(), fitCalibration(), fitColumnScaler(), fitFeatureScaler(), fitTargetScaler(), IFeatureScaler (+4 more)
+
+### Community 34 - "technical-indicators.ts"
+Cohesion: 0.20
+Nodes (19): atr(), buildCandleFeatures(), buildMarketFeatures(), buildPremiumFeatures(), buildReferenceFeatures(), coinbasePremium(), computeIndicators(), ema() (+11 more)
+
+### Community 35 - "orderflow-backtest.ts"
+Cohesion: 0.14
+Nodes (7): AVERAGE_WINDOWS_SECONDS, COSTS_BPS, HORIZONS_SECONDS, ITrade, log, RIDGE_PENALTY, THRESHOLD_QUANTILES
+
+### Community 36 - "Learn More"
+Cohesion: 0.14
+Nodes (13): Advanced Configuration, Analyzing the Bundle Size, Available Scripts, Code Splitting, Deployment, Getting Started with Create React App, Learn More, Making a Progressive Web App (+5 more)
+
+### Community 37 - "OrderFlowSeconds"
+Cohesion: 0.22
+Nodes (3): flowImbalance(), OrderFlowSeconds, signedLog()
+
+### Community 38 - "orderflow-signal.ts"
+Cohesion: 0.12
+Nodes (17): DepthRow, HORIZONS_SECONDS, IBook, imbalance(), Level, LiquidationRow, log, readBooks() (+9 more)
+
+### Community 41 - "features-report.ts"
+Cohesion: 0.25
+Nodes (6): fs-extra, FeatureGroup, GROUPS, LABELS, log, VARIANTS
+
 ## Knowledge Gaps
 - **46 isolated node(s):** `@tensorflow/tfjs`, `@tensorflow/tfjs-layers`, `@tensorflow/tfjs-node-gpu`, `aws-sdk`, `date-fns` (+41 more)
-  These have ≤1 connection - possible missing edges. (Counts symbols only; 229 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **4 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 348 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **12 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `log()` connect `Exchange & Storage Services` to `Binance Stream Collectors`, `Features & Indicators`, `App Bootstrap & Utils`, `DQN Training (TensorflowAI)`, `Backtest & Feature Reports`, `RL Trading Environment`, `Collectors Supervisor`?**
-  _High betweenness centrality (0.156) - this node is a cross-community bridge._
+- **Why does `log()` connect `Exchange & Storage Services` to `Colors`, `.trainForecast`, `TensorflowAI`, `CryptoPairs`, `backtest.ts`, `RL Trading Environment`, `Collectors Supervisor`, `.predictNextPrices`, `Tensorflow.service.ts`?**
+  _High betweenness centrality (0.106) - this node is a cross-community bridge._
 - **What connects `@tensorflow/tfjs`, `@tensorflow/tfjs-layers`, `@tensorflow/tfjs-node-gpu` to the rest of the system?**
   _46 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Binance Stream Collectors` be split into smaller, more focused modules?**
-  _Cohesion score 0.053763440860215055 - nodes in this community are weakly interconnected._
-- **Why does `dependencies` connect `Dashboard Dependencies` to `Dashboard Charts Deps`?**
-  _High betweenness centrality (0.066) - this node is a cross-community bridge._
-- **Should `Features & Indicators` be split into smaller, more focused modules?**
-  _Cohesion score 0.05041797283176593 - nodes in this community are weakly interconnected._
-- **Why does `react` connect `Dashboard Entry` to `Dashboard Charts Deps`, `Dashboard App & Charts`?**
-  _High betweenness centrality (0.058) - this node is a cross-community bridge._
+- **Should `Colors` be split into smaller, more focused modules?**
+  _Cohesion score 0.055984555984555984 - nodes in this community are weakly interconnected._
+- **Why does `Colors` connect `Colors` to `rebalance-backtest.ts`, `orderflow-backtest.ts`, `orderflow-signal.ts`, `backtest.ts`, `features-report.ts`, `strategy-check.ts`, `daily-horizon.ts`, `Tensorflow.service.ts`, `OrderFlow.service.ts`, `testnet-trade.ts`?**
+  _High betweenness centrality (0.069) - this node is a cross-community bridge._
+- **Should `tensorflow.helpers.ts` be split into smaller, more focused modules?**
+  _Cohesion score 0.1032258064516129 - nodes in this community are weakly interconnected._
+- **Why does `fs-extra` connect `features-report.ts` to `rebalance-backtest.ts`, `orderflow-backtest.ts`, `orderflow-signal.ts`, `Root Package Meta`, `backtest.ts`, `strategy-check.ts`, `daily-horizon.ts`, `Tensorflow.service.ts`, `OrderFlow.service.ts`?**
+  _High betweenness centrality (0.067) - this node is a cross-community bridge._
 - **Should `Exchange & Storage Services` be split into smaller, more focused modules?**
-  _Cohesion score 0.06448412698412699 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06298076923076923 - nodes in this community are weakly interconnected._

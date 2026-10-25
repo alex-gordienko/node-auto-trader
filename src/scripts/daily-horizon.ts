@@ -19,6 +19,7 @@ import StorageService from "../services/Local.storage.service";
 import { IFundingRate, IMarketCandle } from "../types/marketData.types";
 import { correlation, correlationT, lastIndexAtOrBefore } from "../utils/tensorflow.helpers";
 import { createLogger, Colors } from "../utils/colored-console";
+import { fitRidge } from "../utils/vol-model";
 
 const log = createLogger("daily-horizon");
 
@@ -122,36 +123,6 @@ const featuresAt = (market: IMarket, t: number): number[] => {
   const week = market.funding.values.slice(from + 1, lastIndexAtOrBefore(market.funding.times, t) + 1);
   const funding = from >= 0 && week.length ? mean(week) : NaN;
   return [...eth, ...btc, eth[1] - btc[1], eth[2] - btc[2], eth[3] - btc[3], funding];
-};
-
-/** Solves A·x = b (A symmetric positive definite: Gauss–Jordan without pivoting is enough). */
-const solve = (A: number[][], b: number[]): number[] => {
-  const m = A.map((row, i) => [...row, b[i]]);
-  const n = b.length;
-  for (let c = 0; c < n; c++) {
-    for (let r = 0; r < n; r++) {
-      if (r === c) continue;
-      const f = m[r][c] / m[c][c];
-      for (let k = c; k <= n; k++) m[r][k] -= f * m[c][k];
-    }
-  }
-  return m.map((row, i) => row[n] / row[i]);
-};
-
-/** Ridge regression on standardized features (the intercept, i.e. the average return, is not penalized). */
-const fitRidge = (X: number[][], y: number[], penalty: number) => {
-  const n = X.length;
-  const cols = X[0].map((_, j) => j);
-  const mu = cols.map((j) => mean(X.map((row) => row[j])));
-  const sd = cols.map((j) => std(X.map((row) => row[j]), mu[j]));
-  const Z = X.map((row) => row.map((v, j) => (v - mu[j]) / sd[j]));
-  const yMean = mean(y);
-  const A = cols.map((i) => cols.map((j) => Z.reduce((sum, row) => sum + row[i] * row[j], 0) + (i === j ? penalty * n : 0)));
-  const w = solve(
-    A,
-    cols.map((i) => Z.reduce((sum, row, k) => sum + row[i] * (y[k] - yMean), 0))
-  );
-  return (x: number[]) => yMean + x.reduce((sum, v, j) => sum + (w[j] * (v - mu[j])) / sd[j], 0);
 };
 
 /** Out-of-sample forecasts: each test year uses a model fitted only on days whose target ended by January 1. */

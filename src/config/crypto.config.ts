@@ -232,6 +232,30 @@ const cryptoConfig = {
     },
   },
 
+  // Trading strategy (paper only, no real orders): a 50/50 BTC + ETH basket, each half held in its coin with the share
+  // of trend lookbacks 10–120d that point up, sized down when the coin is more volatile than targetVolatility; decided
+  // every stepDays at the first check after 00:00 UTC (utils/daily-strategy.ts, services/VoteTrader.service.ts).
+  // `strategy-check` 2019–2026 at 0.1%: CAGR +44% vs buy & hold +47%, max DD −44% vs −77%, Sharpe 1.20 vs 0.91 —
+  // a smaller drawdown, not a higher return; the Sharpe gain is not significant (t ≈ 1). Fills: Binance spot prices.
+  vote: {
+    coins: ["BTC", "ETH"],
+    capitalUsd: Number(process.env.VOTE_CAPITAL_USD || 1000),
+    stepDays: Number(process.env.VOTE_STEP_DAYS || 3),
+    targetVolatility: Number(process.env.VOTE_TARGET_VOLATILITY || 0.6),
+    minChange: Number(process.env.VOTE_MIN_CHANGE || 0.25),
+    minTradeUsd: Number(process.env.VOTE_MIN_TRADE_USD || 10),
+    // Binance spot taker fee, and a fill worse than the last price
+    feeRate: Number(process.env.VOTE_FEE_RATE || 0.001),
+    slippage: Number(process.env.VOTE_SLIPPAGE || 0.0005),
+    checkMinutes: Number(process.env.VOTE_CHECK_MINUTES || 60),
+    // a basket half in coins drops 5% a day several times a year and 20% from its peak most years: the AI's
+    // limits below would stop it all the time; 35% is the backtested drawdown guard, 15% a day is a crash
+    killSwitch: {
+      maxDailyLoss: Number(process.env.VOTE_KILL_MAX_DAILY_LOSS || 0.15),
+      maxDrawdown: Number(process.env.VOTE_KILL_MAX_DRAWDOWN || 0.35),
+    },
+  },
+
   // Stop-crane and trade limit of the AI trading (utils/kill-switch.ts): any stop writes src/Storage/trading/STOP and
   // holds until a human deletes it. At most 3 positions are opened per UTC day whatever is set here.
   killSwitch: {

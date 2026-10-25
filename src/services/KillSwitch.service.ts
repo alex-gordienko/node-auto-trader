@@ -5,6 +5,7 @@ import cryptoConfig from "../config/crypto.config";
 import { Colors, createLogger } from "../utils/colored-console";
 import {
   canOpen,
+  IKillSwitchRules,
   checkMarket,
   createKillSwitch,
   IKillSwitchState,
@@ -49,9 +50,12 @@ class KillSwitchService {
   }
 
   /** Every check of the strategy, with or without a trade: applies the stop file and the market rules. */
-  public check = (name: string, { price, equity }: { price: number; equity: number }): IKillSwitchGate => {
+  public check = (
+    name: string,
+    { price, equity }: { price: number; equity: number },
+    rules: IKillSwitchRules = cryptoConfig.killSwitch
+  ): IKillSwitchGate => {
     const now = Date.now();
-    const rules = cryptoConfig.killSwitch;
     let state = this.read(name) ?? createKillSwitch(equity, now);
 
     if (fs.existsSync(this.stopFile)) {
@@ -85,11 +89,11 @@ class KillSwitchService {
   };
 
   /** A position was closed with `pnl` USDT net of costs; a losing streak stops the bot. */
-  public closed = (name: string, pnl: number): void => {
+  public closed = (name: string, pnl: number, rules: IKillSwitchRules = cryptoConfig.killSwitch): void => {
     const state = this.read(name);
     if (!state) return;
     const now = Date.now();
-    const { state: next, stop } = recordClose(state, { now, pnl }, cryptoConfig.killSwitch);
+    const { state: next, stop } = recordClose(state, { now, pnl }, rules);
     if (stop) {
       fs.writeFileSync(this.stopFile, `${new Date(now).toISOString()} ${name}: ${stop}\n`);
       log(`${name}: STOP-CRANE: ${stop}. Trading is stopped until ${this.stopFile} is deleted`, Colors.RED);
