@@ -7,6 +7,8 @@
  * last `trainingMinuteDays` before the period only, warm-started from the previous period. Then they trade the period. Decisions are made the same way as in the live bot, but orders are
  * simulated: they fill at the next minute's open, and every swap pays exchange fee + spread and a fixed network
  * fee. Models are saved to a separate folder (MODELS_DIR) so the production models are never overwritten.
+ * "DQN + stop-crane" trades the same models through utils/kill-switch.ts like the live bot: at most 3 positions a
+ * day, a stop closes the position, and a human is assumed to resume trading BACKTEST_RESUME_HOURS after each stop.
  */
 import fse from "fs-extra";
 
@@ -17,6 +19,7 @@ import { CryptoPairs } from "../types/basic.types";
 import { IMarketDataset } from "../types/marketData.types";
 import { IOHLCV } from "../utils/technical-indicators";
 import { Colors, log } from "../utils/colored-console";
+import { canOpen, checkMarket, createKillSwitch, recordClose, recordOpen, resumeKillSwitch } from "../utils/kill-switch";
 
 const PAIR = CryptoPairs.ETH_USDT;
 const HISTORY_DAYS = Number(process.env.BACKTEST_HISTORY_DAYS || 365);
@@ -34,6 +37,8 @@ const START_USDT = 1000;
 const MIN_TRADE_USD = 15;
 const RANDOM_RUNS = 1000;
 const MINUTES_PER_YEAR = 525600;
+const KILL_RULES = cryptoConfig.killSwitch;
+const RESUME_AFTER_MS = Number(process.env.BACKTEST_RESUME_HOURS || 24) * 3600_000;
 
 // Costs are unknown until real swaps are made, so every result is shown for three levels.
 // tradeCostPct: exchange fee + spread as a share of the traded amount.
@@ -183,9 +188,75 @@ const simulate = (candles: IOHLCV[], start: number, actions: Map<number, Action>
   };
 };
 
+interface IGuarded {
+  actions: Map<number, Action>;
+  stops: { at: string; reason: string }[];
+  skippedBuys: number; // Buy decisions refused by the daily limit or a stop
+}
+
+/**
+ * DQN decisions through the stop-crane. The DQN decides from the position it really holds, so the decisions are
+ * made anew; equity and the pnl of each trade are counted at the `cost` level, like the live bot's own books.
+ */
+const guardedDqn = (pre: ReturnType<typeof TensorflowService.prepareBacktest>, start: number, cost: ICost): IGuarded => {
+  const candles = pre.candles;
+  const result: IGuarded = { actions: new Map(), stops: [], skippedBuys: 0 };
+  let ks = createKillSwitch(START_USDT, candles[start].time * 1000);
+  let usdt = START_USDT;
+  let eth = 0;
+  let entry = 0;
+  let entryUsd = 0;
+  for (let i = start; i < candles.length - 1; i += DECISION_EVERY) {
+    const now = candles[i].time * 1000;
+    const price = candles[i].close;
+    if (ks.stopped && now - ks.stoppedAt >= RESUME_AFTER_MS) ks = resumeKillSwitch(ks, usdt + eth * price, now);
+    const check = checkMarket(ks, { now, price, equity: usdt + eth * price }, KILL_RULES);
+    ks = check.state;
+    if (check.stop) result.stops.push({ at: new Date(now).toISOString(), reason: check.stop });
+
+    // while stopped the models are not asked: the position is closed and nothing is opened
+    let action: Action = ks.stopped ? "Sell" : TensorflowService.decideAt(pre, i, eth > 0 ? 1 : 0, entry).action;
+    if (action === "Buy" && eth === 0 && !canOpen(ks, now, KILL_RULES).allowed) {
+      result.skippedBuys++;
+      action = "Hold";
+    }
+
+    // orders fill at the next minute's open, as in `simulate`
+    const fill = candles[i + 1].open;
+    if (action === "Buy" && eth === 0 && usdt >= MIN_TRADE_USD) {
+      entryUsd = usdt;
+      eth = (usdt - usdt * cost.tradeCostPct - cost.gasUsd) / fill;
+      usdt = 0;
+      entry = price;
+      ks = recordOpen(ks, now);
+      result.actions.set(i + 1, "Buy");
+    } else if (action === "Sell" && eth > 0) {
+      usdt = Math.max(0, eth * fill * (1 - cost.tradeCostPct) - cost.gasUsd);
+      eth = 0;
+      entry = 0;
+      const closed = recordClose(ks, { now, pnl: usdt - entryUsd }, KILL_RULES);
+      ks = closed.state;
+      if (closed.stop) result.stops.push({ at: new Date(now).toISOString(), reason: closed.stop });
+      result.actions.set(i + 1, "Sell");
+    }
+  }
+  return result;
+};
+
+/** Most positions the strategy opened within one UTC day. */
+const maxBuysPerDay = (candles: IOHLCV[], actions: Map<number, Action>): number => {
+  const perDay = new Map<number, number>();
+  for (const [m, action] of actions) {
+    if (action !== "Buy") continue;
+    const day = Math.floor(candles[m].time / 86400);
+    perDay.set(day, (perDay.get(day) ?? 0) + 1);
+  }
+  return Math.max(0, ...perDay.values());
+};
+
 const fmt = (v: number, digits = 2) => (v >= 0 ? "+" : "") + v.toFixed(digits);
 
-const STRATEGIES = ["DQN", "range rule", "buy & hold ETH", "hold USDT"];
+const STRATEGIES = ["DQN", "DQN + stop-crane", "range rule", "buy & hold ETH", "hold USDT"];
 
 interface IFoldCostResult {
   results: IResult[];
@@ -197,6 +268,11 @@ interface IFold {
   from: string;
   to: string;
   dqnOrders: number;
+  dqnMaxBuysPerDay: number;
+  guardedOrders: number;
+  guardedMaxBuysPerDay: number;
+  guardedSkippedBuys: number;
+  stops: { at: string; reason: string }[];
   costs: Record<string, IFoldCostResult>;
 }
 
@@ -246,16 +322,25 @@ const runFold = async (
   const dqnActions = new Map<number, Action>();
   decisions.forEach((d) => d.action !== "Hold" && dqnActions.set(d.index + 1, d.action));
 
+  // the stop-crane's books are kept at the typical cost level; its orders are then simulated at every level
+  const guarded = guardedDqn(pre, start, COSTS[1]);
+
   const fold: IFold = {
     from: new Date(pre.candles[start].time * 1000).toISOString(),
     to: new Date(pre.candles[pre.candles.length - 1].time * 1000).toISOString(),
     dqnOrders: dqnActions.size,
+    dqnMaxBuysPerDay: maxBuysPerDay(pre.candles, dqnActions),
+    guardedOrders: guarded.actions.size,
+    guardedMaxBuysPerDay: maxBuysPerDay(pre.candles, guarded.actions),
+    guardedSkippedBuys: guarded.skippedBuys,
+    stops: guarded.stops,
     costs: {},
   };
 
   for (const cost of COSTS) {
     const results = [
       simulate(pre.candles, start, dqnActions, cost, "DQN"),
+      simulate(pre.candles, start, guarded.actions, cost, "DQN + stop-crane"),
       simulate(pre.candles, start, rangeRuleActions(decisions, cost), cost, "range rule"),
       simulate(pre.candles, start, new Map<number, Action>([[start, "Buy"]]), cost, "buy & hold ETH"),
       simulate(pre.candles, start, new Map(), cost, "hold USDT"),
@@ -283,11 +368,13 @@ const runFold = async (
 
   // short per-period summary at the typical cost level
   const typical = fold.costs[COSTS[1].name];
-  const bh = typical.results[2].returnPct;
+  const bh = typical.results.find((r) => r.name === "buy & hold ETH")!.returnPct;
   log(
     `[**] Period ${n} (typical costs): ` +
       typical.results.map((r) => `${r.name} ${fmt(r.returnPct)}%`).join(", ") +
-      ` | DQN orders ${fold.dqnOrders}, beats ${typical.dqnBeatsShuffledPct.toFixed(0)}% of random timings`,
+      ` | DQN orders ${fold.dqnOrders} (up to ${fold.dqnMaxBuysPerDay} buys a day), beats ${typical.dqnBeatsShuffledPct.toFixed(0)}% of random timings` +
+      ` | with stop-crane ${fold.guardedOrders} orders (up to ${fold.guardedMaxBuysPerDay} buys a day, ${fold.guardedSkippedBuys} buys refused), ` +
+      `stops: ${fold.stops.length ? fold.stops.map((x) => `${x.at.slice(0, 16)} ${x.reason}`).join("; ") : "none"}`,
     typical.results[0].returnPct > bh ? Colors.GREEN : Colors.YELLOW
   );
   return fold;
@@ -347,7 +434,7 @@ const runFold = async (
       };
     };
     const rows = STRATEGIES.map(chained);
-    const bh = rows[2];
+    const bh = rows.find((r) => r.name === "buy & hold ETH")!;
     for (const r of rows) {
       const beats = r.perPeriodPct.filter((v, k) => v > bh.perPeriodPct[k]).length;
       log(
@@ -355,7 +442,7 @@ const runFold = async (
           `${r.worstDrawdownPct.toFixed(2).padStart(10)}${String(r.orders).padStart(8)}${r.fees.toFixed(2).padStart(9)}` +
           `${`${beats}/${folds}`.padStart(11)}   ` +
           r.perPeriodPct.map((v) => fmt(v, 1)).join(" / "),
-        r.name === "DQN" ? (r.totalPct > bh.totalPct ? Colors.GREEN : Colors.YELLOW) : Colors.WHITE
+        r.name.startsWith("DQN") ? (r.totalPct > bh.totalPct ? Colors.GREEN : Colors.YELLOW) : Colors.WHITE
       );
     }
     const beatsRandom = periods.map((f) => f.costs[cost.name].dqnBeatsShuffledPct);
@@ -376,12 +463,21 @@ const runFold = async (
     summary[cost.name] = { ...cost, strategies: rows, dqnBeatsShuffledPct: beatsRandom };
   }
 
+  const allStops = periods.flatMap((f) => f.stops);
+  log(
+    `\n[**] Stop-crane: ${allStops.length} stops, ${periods.reduce((a, f) => a + f.guardedSkippedBuys, 0)} buys refused, ` +
+      `most buys in a day ${Math.max(...periods.map((f) => f.guardedMaxBuysPerDay))} (without it ${Math.max(...periods.map((f) => f.dqnMaxBuysPerDay))}); ` +
+      `resume ${RESUME_AFTER_MS / 3600_000} h after a stop, rules ${JSON.stringify(KILL_RULES)}`,
+    Colors.WHITE
+  );
+  for (const x of allStops) log(`  ${x.at.slice(0, 16)} ${x.reason}`, Colors.WHITE);
+
   const dir = `${cryptoConfig.paths.storageDir}/backtest`;
   fse.ensureDirSync(dir);
   const file = `${dir}/${PAIR}-walkforward-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
   fse.writeJsonSync(
     file,
-    { pair: PAIR, folds, evalDays: EVAL_DAYS, trainDays: TRAIN_DAYS, decisionMinutes: DECISION_EVERY, periods, summary },
+    { pair: PAIR, folds, evalDays: EVAL_DAYS, trainDays: TRAIN_DAYS, decisionMinutes: DECISION_EVERY, killSwitch: KILL_RULES, periods, summary },
     { spaces: 2 }
   );
   log(`\n[**] Report saved to ${file}`, Colors.GREEN);

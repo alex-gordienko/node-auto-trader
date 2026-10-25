@@ -231,6 +231,17 @@ const cryptoConfig = {
       maxPriceJump: Number(process.env.STOP_MAX_PRICE_JUMP || 0.15),
     },
   },
+
+  // Stop-crane and trade limit of the AI trading (utils/kill-switch.ts): any stop writes src/Storage/trading/STOP and
+  // holds until a human deletes it. At most 3 positions are opened per UTC day whatever is set here.
+  killSwitch: {
+    maxTradesPerDay: Number(process.env.KILL_MAX_TRADES_PER_DAY || 3),
+    maxLossesInARow: Number(process.env.KILL_MAX_LOSSES_IN_A_ROW || 3),
+    maxDailyLoss: Number(process.env.KILL_MAX_DAILY_LOSS || 0.05),
+    maxDrawdown: Number(process.env.KILL_MAX_DRAWDOWN || 0.2),
+    maxPriceMove: Number(process.env.KILL_MAX_PRICE_MOVE || 0.1),
+    priceWindowMinutes: Number(process.env.KILL_PRICE_WINDOW_MINUTES || 60),
+  },
 };
 
 export default cryptoConfig;
