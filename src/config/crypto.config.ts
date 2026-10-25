@@ -256,6 +256,30 @@ const cryptoConfig = {
     },
   },
 
+  // Paper trading of the two horizon-search candidates (research/horizon/report.md), next to the vote: a model scores
+  // ETH every 5 minutes from 1m candles, only the most confident moments are entered (≤3 a UTC day, one position held
+  // for the model's horizon). Walk-forward 2022–2026 at 0.1% + 0.02%/side: ETH 3d gbm long +113 bps/trade, Sharpe 0.90,
+  // t 2.0; ETH 12h ridge long/short +49 bps, Sharpe 0.94, t 2.1 — 56 configs were tried, so not proven. No real orders;
+  // shorts are only simulated (spot is long/flat). Models: src/models/horizon/<model>.json from research/horizon/export.py.
+  horizon: {
+    enabled: (process.env.HORIZON_ENABLED || "true") === "true",
+    tracks: [
+      { name: "eth-3d-gbm-long", model: "eth-3d-gbm", mode: "long" as const },
+      { name: "eth-12h-ridge-ls", model: "eth-12h-ridge", mode: "ls" as const },
+      { name: "eth-12h-ridge-long", model: "eth-12h-ridge", mode: "long" as const },
+    ],
+    capitalUsd: Number(process.env.HORIZON_CAPITAL_USD || 1000),
+    // the research costs: Binance spot taker fee and 0.02% slippage per side
+    feeRate: Number(process.env.HORIZON_FEE_RATE || 0.001),
+    slippage: Number(process.env.HORIZON_SLIPPAGE || 0.0002),
+    checkMinutes: 5,
+    // a track holds 100% ETH while in a position: the vote's crash and drawdown limits, the AI's losing streak
+    killSwitch: {
+      maxDailyLoss: Number(process.env.HORIZON_KILL_MAX_DAILY_LOSS || 0.15),
+      maxDrawdown: Number(process.env.HORIZON_KILL_MAX_DRAWDOWN || 0.35),
+    },
+  },
+
   // Stop-crane and trade limit of the AI trading (utils/kill-switch.ts): any stop writes src/Storage/trading/STOP and
   // holds until a human deletes it. At most 3 positions are opened per UTC day whatever is set here.
   killSwitch: {
