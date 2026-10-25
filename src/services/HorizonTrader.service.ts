@@ -5,6 +5,7 @@ import cryptoConfig from "../config/crypto.config";
 import BinanceClient from "./collectors/BinanceClient";
 import MarketDataService from "./collectors/MarketData.service";
 import StorageService from "./Local.storage.service";
+import BinanceExecutionService from "./BinanceExecution.service";
 import { Colors, createLogger } from "../utils/colored-console";
 import { canOpen, checkMarket, createKillSwitch, IKillSwitchRules, IKillSwitchState, recordClose, recordOpen, resumeKillSwitch } from "../utils/kill-switch";
 import {
@@ -193,6 +194,11 @@ class HorizonTraderService {
     return trade;
   }
 
+  /** EXECUTION_MODE=testnet: a long entry or exit as a testnet order; a sell closes everything this track bought. */
+  private mirror(track: IHorizonTrack, side: "BUY" | "SELL", usd: number, price: number) {
+    BinanceExecutionService.mirror({ strategy: `horizon-${track.name}`, symbol: SYMBOL.replace("-", ""), side, usd, all: side === "SELL", refPrice: price, paperCostBps: this.cost() * 1e4 });
+  }
+
   private stop(track: IHorizonTrack, reason: string, now: number) {
     fs.writeFileSync(this.stopFile(track.name), `${new Date(now).toISOString()} horizon ${track.name}: ${reason}\n`);
     log(`${track.name}: STOP-CRANE: ${reason}. This track is stopped until ${this.stopFile(track.name)} is deleted`, Colors.RED);
@@ -222,6 +228,7 @@ class HorizonTraderService {
     if (g.position && (now >= g.position.exitAt || mustExit)) {
       const tr = this.close(g, price, now);
       log(`${track.name}: paper ${tr.side > 0 ? "SELL" : "BUY back"} ETH at ${price.toFixed(2)}, trade ${pct(tr.ret)} (${tr.pnl.toFixed(2)} USDT)${mustExit ? ", stop-crane exit" : ""}`, Colors.GREEN);
+      if (tr.side > 0) this.mirror(track, "SELL", g.equity, price);
       const closed = recordClose(track.killSwitch, { now, pnl: tr.pnl }, rules);
       track.killSwitch = closed.state;
       if (closed.stop) this.stop(track, closed.stop, now);
@@ -230,8 +237,11 @@ class HorizonTraderService {
       const permit = canOpen(track.killSwitch, now, rules);
       if (!permit.allowed) log(`${track.name}: entry skipped, ${permit.reason}`, Colors.YELLOW);
       else {
+        const usd = g.equity;
         this.open(g, side, price, now, model.horizonMinutes);
         track.killSwitch = recordOpen(track.killSwitch, now);
+        if (side > 0) this.mirror(track, "BUY", usd, price);
+        else if (BinanceExecutionService.enabled) log(`${track.name}: the short is not sent to the testnet, spot cannot short`, Colors.YELLOW);
         log(`${track.name}: paper ${side > 0 ? "BUY" : "SHORT (simulated)"} ETH at ${price.toFixed(2)} for ${model.horizonMinutes / 60} h — score ${(score * 1e4).toFixed(1)} bps vs threshold ${(threshold * 1e4).toFixed(1)}`, Colors.GREEN);
       }
     }

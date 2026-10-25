@@ -6,6 +6,7 @@ import BinanceClient from "./collectors/BinanceClient";
 import MarketDataService from "./collectors/MarketData.service";
 import StorageService from "./Local.storage.service";
 import KillSwitchService from "./KillSwitch.service";
+import BinanceExecutionService from "./BinanceExecution.service";
 import { Colors, createLogger } from "../utils/colored-console";
 import { IPaperFill, IPaperLeg, rebalanceLeg, toDailyBars, voteTarget } from "../utils/daily-strategy";
 import { forecastVolatility, TRAIN_DAYS } from "../utils/vol-model";
@@ -93,6 +94,16 @@ class VoteTraderService {
     p.legs[coin] = leg;
     p.fills.push({ ...fill, at: now, coin });
     log(`paper ${fill.side.toUpperCase()} ${coin} for ${fill.usd.toFixed(2)} USDT at ${fill.price.toFixed(2)} (fee ${fill.fee.toFixed(2)})`, Colors.GREEN);
+    // EXECUTION_MODE=testnet: the same fill as a testnet order, after the stop-crane already allowed it
+    BinanceExecutionService.mirror({
+      strategy: NAME,
+      symbol: `${coin}USDT`,
+      side: fill.side === "buy" ? "BUY" : "SELL",
+      usd: fill.usd,
+      all: fill.closedPnl !== null,
+      refPrice: price,
+      paperCostBps: (feeRate + slippage) * 1e4,
+    });
     if (fill.side === "buy") KillSwitchService.opened(NAME);
     if (fill.closedPnl !== null) KillSwitchService.closed(NAME, fill.closedPnl, this.rules);
   }

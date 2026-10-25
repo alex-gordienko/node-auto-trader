@@ -280,6 +280,19 @@ const cryptoConfig = {
     },
   },
 
+  // Order execution (services/BinanceExecution.service.ts). "paper" (default): no orders anywhere. "testnet": every
+  // paper fill of the vote and of the horizon long tracks is mirrored as an order on Binance Demo Trading / Spot
+  // Testnet (fake money, keys BINANCE_TESTNET_API_KEY / _SECRET). Any other URL is refused unless LIVE_TRADING=true
+  // AND src/Storage/trading/LIVE_TRADING_CONFIRMED names that host.
+  execution: {
+    mode: (process.env.EXECUTION_MODE || "paper") as "paper" | "testnet",
+    baseUrl: process.env.BINANCE_TESTNET_URL || "https://demo-api.binance.com",
+    // limit-maker: LIMIT_MAKER at the best bid / ask, the rest as a market order after the timeout
+    orderType: (process.env.EXECUTION_ORDER_TYPE || "limit-maker") as "limit-maker" | "market",
+    makerTimeoutSeconds: Number(process.env.EXECUTION_MAKER_TIMEOUT_SECONDS || 60),
+    pollSeconds: Number(process.env.EXECUTION_POLL_SECONDS || 2),
+  },
+
   // Stop-crane and trade limit of the AI trading (utils/kill-switch.ts): any stop writes src/Storage/trading/STOP and
   // holds until a human deletes it. At most 3 positions are opened per UTC day whatever is set here.
   killSwitch: {

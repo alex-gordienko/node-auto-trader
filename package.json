@@ -21,6 +21,7 @@
     "backtest:orderflow": "NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/orderflow-backtest.ts",
     "signal:orderflow": "NODE_OPTIONS=\"--max-old-space-size=8192\" ts-node --transpile-only src/scripts/orderflow-signal.ts",
     "rebalance:backtest": "ts-node --transpile-only src/scripts/rebalance-backtest.ts",
+    "execution:report": "ts-node --transpile-only src/scripts/execution-report.ts",
     "horizon:report": "ts-node --transpile-only src/scripts/horizon-report.ts",
     "testnet": "STORAGE_DIR=\"$PWD/src/Storage/testnet\" ts-node --transpile-only src/scripts/testnet-trade.ts"
   },

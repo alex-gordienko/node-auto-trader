@@ -18,15 +18,15 @@
     "semantic_hash": "a88db0de8f6bf05cf499ae96ab482308"
   },
   "package.json": {
-    "mtime": 1792946713.4552069,
-    "seen": 1792946899.8045828,
-    "ast_hash": "20fb8305ee1c1f7dd9bcf0990a75472a",
+    "mtime": 1792947371.0761588,
+    "seen": 1792947423.624769,
+    "ast_hash": "8c9e6e48117451cce5f1429e219540df",
     "semantic_hash": ""
   },
   "src/config/crypto.config.ts": {
-    "mtime": 1792946686.0028613,
-    "seen": 1792946899.804595,
-    "ast_hash": "cc727556aa04e96b0289a64ee134e3c4",
+    "mtime": 1792947218.0403368,
+    "seen": 1792947423.6247838,
+    "ast_hash": "78281f1c47d6b88367e88426454297e5",
     "semantic_hash": ""
   },
   "src/config/digitalOcean.config.ts": {
@@ -132,9 +132,9 @@
     "semantic_hash": ""
   },
   "src/services/StatisticAndPrediction.service.ts": {
-    "mtime": 1792946713.4539163,
-    "seen": 1792946899.804661,
-    "ast_hash": "09f42e1bd5c3e64044bed79e374c52ca",
+    "mtime": 1792947282.8704693,
+    "seen": 1792947423.6248698,
+    "ast_hash": "74663fc81def8820a44194d0ba70a48a",
     "semantic_hash": ""
   },
   "src/services/Tensorflow.service.ts": {
@@ -444,9 +444,9 @@
     "semantic_hash": ""
   },
   "src/services/VoteTrader.service.ts": {
-    "mtime": 1792936814.522457,
-    "seen": 1792946899.8046641,
-    "ast_hash": "caf6568d3da32e7db898952edfb3ab73",
+    "mtime": 1792947282.8692079,
+    "seen": 1792947423.624873,
+    "ast_hash": "1eaeb1a2bc14663bc8330cba155f5864",
     "semantic_hash": ""
   },
   "src/services/collectors/CoinbaseCollector.service.ts": {
@@ -630,9 +630,9 @@
     "semantic_hash": ""
   },
   "src/services/HorizonTrader.service.ts": {
-    "mtime": 1792946686.9814045,
-    "seen": 1792946899.804651,
-    "ast_hash": "9343105a2f3008e029b77bc234263662",
+    "mtime": 1792947282.8700297,
+    "seen": 1792947423.6248598,
+    "ast_hash": "1955c6120516593cb98e6c8153635f8b",
     "semantic_hash": ""
   },
   "src/utils/horizon-model.fixture.json": {
@@ -657,6 +657,30 @@
     "mtime": 1792946180.044923,
     "seen": 1792946899.804781,
     "ast_hash": "b9ae9adf09ba74962049a461927b8bf6",
+    "semantic_hash": ""
+  },
+  "src/scripts/execution-report.ts": {
+    "mtime": 1792947369.3703978,
+    "seen": 1792947423.6248178,
+    "ast_hash": "8de2e52991eea4d81cada4e700450cae",
+    "semantic_hash": ""
+  },
+  "src/services/BinanceExecution.service.ts": {
+    "mtime": 1792947343.9616187,
+    "seen": 1792947423.624835,
+    "ast_hash": "34a3cb8323a49e50a4a21a356ef5d2f1",
+    "semantic_hash": ""
+  },
+  "src/utils/binance-execution.test.ts": {
+    "mtime": 1792947343.9624887,
+    "seen": 1792947423.624923,
+    "ast_hash": "4a5c5dd3dafad0ed16b9657295e35496",
+    "semantic_hash": ""
+  },
+  "src/utils/binance-execution.ts": {
+    "mtime": 1792947179.8929543,
+    "seen": 1792947423.624924,
+    "ast_hash": "9548438bdad13fe27f91326df932c833",
     "semantic_hash": ""
   }
 }
