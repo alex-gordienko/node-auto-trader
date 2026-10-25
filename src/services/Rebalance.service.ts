@@ -3,6 +3,7 @@ import path from "path";
 
 import cryptoConfig from "../config/crypto.config";
 import MarketDataService from "./collectors/MarketData.service";
+import KillSwitchService from "./KillSwitch.service";
 import { CryptoBase, CryptoPairs } from "../types/basic.types";
 import { Colors, createLogger } from "../utils/colored-console";
 import {
@@ -23,6 +24,7 @@ interface IShadowPortfolio {
   eth: number;
   usdt: number;
   entryPrice: number;
+  entryUsd?: number; // USDT spent on the open position, for its pnl (missing in files written before the stop-crane)
   startPrice: number;
   startValue: number;
   lastDecisionAt: number;
@@ -36,11 +38,12 @@ interface IShadowPortfolio {
  * Stop-crane: when a rule fires, its reason is written to src/Storage/trading/STOP and the bot stops trading.
  * Delete that file to resume; create it (with any text) to stop the bot by hand.
  * The DQN keeps deciding every few minutes; its decisions move a shadow paper portfolio (<pair>-dqn-paper.json) with
- * the same costs, so live data shows whether the neural networks would beat the 50/50 rule.
+ * the same costs, so live data shows whether the neural networks would beat the 50/50 rule. The DQN trades through
+ * the stop-crane (KillSwitch.service): at most 3 positions a day, and a stop closes its position.
  */
 class RebalanceService {
   private readonly dir = path.join(cryptoConfig.paths.storageDir, "trading");
-  public readonly stopFile = path.join(this.dir, "STOP");
+  public readonly stopFile = KillSwitchService.stopFile;
 
   private get config(): IRebalanceConfig {
     const { target, band, minTradeUsd, stop } = cryptoConfig.rebalance;
@@ -114,17 +117,27 @@ class RebalanceService {
       swaps: 0,
       costs: 0,
     };
-    if (now - s.lastDecisionAt < decisionMinutes * 60_000 - 30_000) return;
+    const name = `${pair}-dqn`;
+    const gate = KillSwitchService.check(name, { price, equity: s.eth * price + s.usdt });
+    // a stop closes the position at once, without waiting for the next decision
+    const exit = gate.mustExit && s.eth > 0;
+    if (!exit && now - s.lastDecisionAt < decisionMinutes * 60_000 - 30_000) return;
     s.lastDecisionAt = now;
     if (command === "Buy" && s.eth === 0 && s.usdt >= cryptoConfig.rebalance.minTradeUsd) {
-      const cost = s.usdt * feeRate + gasUsd;
-      s.eth = (s.usdt - cost) / price;
-      s.usdt = 0;
-      s.entryPrice = price;
-      s.swaps++;
-      s.costs += cost;
-      log(`AI paper (DQN): BUY ETH at ${price} (cost ${cost.toFixed(2)} USDT)`, Colors.MAGENTA);
-    } else if (command === "Sell" && s.eth > 0) {
+      if (!gate.mayOpen) {
+        log(`AI paper (DQN): Buy skipped, ${gate.reason}`, Colors.YELLOW);
+      } else {
+        const cost = s.usdt * feeRate + gasUsd;
+        s.entryUsd = s.usdt;
+        s.eth = (s.usdt - cost) / price;
+        s.usdt = 0;
+        s.entryPrice = price;
+        s.swaps++;
+        s.costs += cost;
+        KillSwitchService.opened(name);
+        log(`AI paper (DQN): BUY ETH at ${price} (cost ${cost.toFixed(2)} USDT)`, Colors.MAGENTA);
+      }
+    } else if ((command === "Sell" || exit) && s.eth > 0) {
       const usd = s.eth * price;
       const cost = usd * feeRate + gasUsd;
       s.usdt = usd - cost;
@@ -132,7 +145,9 @@ class RebalanceService {
       s.entryPrice = 0;
       s.swaps++;
       s.costs += cost;
-      log(`AI paper (DQN): SELL ETH at ${price} (cost ${cost.toFixed(2)} USDT)`, Colors.MAGENTA);
+      if (s.entryUsd !== undefined) KillSwitchService.closed(name, s.usdt - s.entryUsd);
+      s.entryUsd = undefined;
+      log(`AI paper (DQN): SELL ETH at ${price} (cost ${cost.toFixed(2)} USDT)${exit ? ", closed by the stop-crane" : ""}`, Colors.MAGENTA);
     }
     this.write(this.shadowFile(pair), s);
   }
