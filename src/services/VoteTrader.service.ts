@@ -8,6 +8,7 @@ import StorageService from "./Local.storage.service";
 import KillSwitchService from "./KillSwitch.service";
 import { Colors, createLogger } from "../utils/colored-console";
 import { IPaperFill, IPaperLeg, rebalanceLeg, toDailyBars, voteTarget } from "../utils/daily-strategy";
+import { forecastVolatility, TRAIN_DAYS } from "../utils/vol-model";
 
 const log = createLogger("vote");
 
@@ -64,8 +65,18 @@ class VoteTraderService {
       const candles = await StorageService.getCandles(symbol, "hour");
       const bars = candles.length ? toDailyBars(candles) : [];
       if (!bars.length || bars[bars.length - 1].t * 1000 !== today * DAY_MS) return null;
-      targets[coin] = voteTarget(bars.map((b) => b.price), cryptoConfig.vote.targetVolatility);
+      const closes = bars.map((b) => b.price);
+      targets[coin] = voteTarget(closes, cryptoConfig.vote.targetVolatility);
       if (!Number.isFinite(targets[coin])) throw new Error(`${symbol}: fewer than 121 daily closes stored`);
+      // shadow only: AI sizing did not beat trailing volatility out of sample (strategy-check "vote + AI vol")
+      const aiVol = forecastVolatility(candles.map((c) => c.close), candles.length - 1);
+      const aiTarget = voteTarget(closes, cryptoConfig.vote.targetVolatility, closes.length - 1, aiVol);
+      log(
+        Number.isFinite(aiVol)
+          ? `${coin} AI shadow: next 3 days' volatility ${(aiVol * 100).toFixed(0)}% → would hold ${(aiTarget * 100).toFixed(0)}% (rule: ${(targets[coin] * 100).toFixed(0)}%)`
+          : `${coin} AI shadow: fewer than ${TRAIN_DAYS + 30} days of hourly candles stored, no forecast`,
+        Colors.MAGENTA
+      );
     }
     return targets;
   }

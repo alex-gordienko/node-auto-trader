@@ -26,9 +26,12 @@ export const realizedVolatility = (closes: number[], k = closes.length - 1): num
   return Math.sqrt((sum / 30) * 365);
 };
 
-/** Wanted coin share: the trend vote, scaled down when the coin is more volatile than `targetVolatility`. */
-export const voteTarget = (closes: number[], targetVolatility: number, k = closes.length - 1): number =>
-  trendVote(closes, k) * Math.min(1, targetVolatility / realizedVolatility(closes, k));
+/**
+ * Wanted coin share: the trend vote, scaled down when the coin is more volatile than `targetVolatility`; `volatility`
+ * is the trailing 30-day one unless a forecast is given.
+ */
+export const voteTarget = (closes: number[], targetVolatility: number, k = closes.length - 1, volatility = realizedVolatility(closes, k)): number =>
+  trendVote(closes, k) * Math.min(1, targetVolatility / volatility);
 
 /** Daily bars at 00:00 UTC from hourly candles (`time` = candle start, unix seconds): a close is known when its candle ends. */
 export const toDailyBars = (candles: { time: number; close: number }[]): IDailyBar[] => {

@@ -12,6 +12,8 @@ import fse from "fs-extra";
 import cryptoConfig from "../config/crypto.config";
 import StorageService from "../services/Local.storage.service";
 import { createLogger, Colors } from "../utils/colored-console";
+import { lastIndexAtOrBefore } from "../utils/tensorflow.helpers";
+import { forecastVolatility, hourlyVolatility, realizedNextVolatility } from "../utils/vol-model";
 import { IDailyBar, IGuardConfig, realizedVolatility, simulate, stats, toDailyBars, trendVote, voteTarget } from "../utils/daily-strategy";
 
 const log = createLogger("strategy-check");
@@ -20,7 +22,7 @@ const DAY = 86400;
 const FIRST_TEST_DAY = Date.UTC(2019, 0, 1) / 1000;
 const SPLIT_DAY = Date.UTC(2023, 0, 1) / 1000;
 // Binance spot fee + spread, and the current bot (ChangeNow + Ethereum gas)
-const COSTS = [0.001, 0.007];
+const COSTS = [0.001, 0.003, 0.007];
 // ETH's own volatility is ~80% a year: sizing to 60% keeps about three quarters of the position on calm days
 const TARGET_VOLATILITY = 0.6;
 const GUARDS: Record<string, IGuardConfig | null> = {
@@ -41,8 +43,12 @@ const date = (t: number) => new Date(t * 1000).toISOString().slice(0, 10);
 const mean = (values: number[]) => values.reduce((s, v) => s + v, 0) / values.length;
 const pct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(0)}%`;
 
+// hourly candles per symbol, for the AI volatility model
+const hourly: Record<string, { closes: number[]; ends: number[] }> = {};
+
 const dailyBars = async (symbol: "ETH-USDT" | "BTC-USDT"): Promise<IDailyBar[]> => {
   const candles = await StorageService.getCandles(symbol, "hour");
+  hourly[symbol] = { closes: candles.map((c) => c.close), ends: candles.map((c) => c.time + 3600) };
   if (!candles.length || candles[0].time > FIRST_TEST_DAY - 200 * DAY) {
     throw new Error(`Needs hourly ${symbol} since mid-2018 in ${cryptoConfig.paths.storageDir}: run the backfill from the header`);
   }
@@ -50,7 +56,7 @@ const dailyBars = async (symbol: "ETH-USDT" | "BTC-USDT"): Promise<IDailyBar[]> 
 };
 
 /** The signals of one coin, from prices known at each decision. */
-const signalsOf = (bars: IDailyBar[]) => {
+const signalsOf = (bars: IDailyBar[], symbol: string) => {
   const trend = (days: number) => bars.map((b, k) => (k >= days ? Number(b.price > bars[k - days].price) : NaN));
   const closes = bars.map((b) => b.price);
   const volatility = bars.map((_, k) => realizedVolatility(closes, k));
@@ -59,8 +65,18 @@ const signalsOf = (bars: IDailyBar[]) => {
   const t45 = trend(45);
   const vote = bars.map((_, k) => (t21[k] + t30[k] + t45[k]) / 3);
   const voteAll = bars.map((_, k) => trendVote(closes, k));
+  // the AI forecast at each decision is fitted on hours known by then only (utils/vol-model.ts)
+  const { closes: hour, ends } = hourly[symbol];
+  const hourAt = bars.map((b) => lastIndexAtOrBefore(ends, b.t));
+  const aiVol = hourAt.map((i) => forecastVolatility(hour, i));
+  // the same 30-day volatility from hourly returns: separates the model from the change of return scale
+  const hourVol = hourAt.map((i) => hourlyVolatility(hour, i, 720));
   const volSized = (signal: number[]) => signal.map((s, k) => s * Math.min(1, TARGET_VOLATILITY / volatility[k]));
-  return { hold: bars.map(() => 1), t30, vote, voteAll, voteAllVol: bars.map((_, k) => voteTarget(closes, TARGET_VOLATILITY, k)), t30Vol: volSized(t30), voteVol: volSized(vote) };
+  return { hold: bars.map(() => 1), t30, vote, voteAll, voteAllVol: bars.map((_, k) => voteTarget(closes, TARGET_VOLATILITY, k)),
+    voteHourVol: bars.map((_, k) => voteTarget(closes, TARGET_VOLATILITY, k, hourVol[k])),
+    voteAi: bars.map((_, k) => voteTarget(closes, TARGET_VOLATILITY, k, aiVol[k])),
+    aiVol,
+    hourAt, t30Vol: volSized(t30), voteVol: volSized(vote) };
 };
 type SignalName = keyof ReturnType<typeof signalsOf>;
 
@@ -72,7 +88,7 @@ type SignalName = keyof ReturnType<typeof signalsOf>;
   const to = Math.min(eth[eth.length - 1].t, btc[btc.length - 1].t);
   const coins = { ETH: eth.filter((b) => b.t >= from && b.t <= to), BTC: btc.filter((b) => b.t >= from && b.t <= to) };
   const all = coins.ETH;
-  const signals = { ETH: signalsOf(coins.ETH), BTC: signalsOf(coins.BTC) };
+  const signals = { ETH: signalsOf(coins.ETH, "ETH-USDT"), BTC: signalsOf(coins.BTC, "BTC-USDT") };
   const first = all.findIndex((b) => b.t >= FIRST_TEST_DAY);
 
   // a 50/50 portfolio is two halves, each traded on its own coin's signal (up to 2 swaps a day)
@@ -89,6 +105,8 @@ type SignalName = keyof ReturnType<typeof signalsOf>;
     { name: "50/50 trend 30d, 1d", coins: ["ETH", "BTC"], signal: "t30", step: 1, minChange: 0 },
     { name: "50/50 vote 10–120d, 3d", coins: ["ETH", "BTC"], signal: "voteAll", step: 3, minChange: 0.25 },
     { name: "50/50 vote + vol size", coins: ["ETH", "BTC"], signal: "voteAllVol", step: 3, minChange: 0.25 },
+    { name: "50/50 vote + 30d h-vol", coins: ["ETH", "BTC"], signal: "voteHourVol", step: 3, minChange: 0.25 },
+    { name: "50/50 vote + AI vol", coins: ["ETH", "BTC"], signal: "voteAi", step: 3, minChange: 0.25 },
     { name: "50/50 trend + vol, 3d", coins: ["ETH", "BTC"], signal: "t30Vol", step: 3, minChange: 0.2 },
     { name: "50/50 vote + vol, 3d", coins: ["ETH", "BTC"], signal: "voteVol", step: 3, minChange: 0.2 },
   ];
@@ -146,6 +164,22 @@ type SignalName = keyof ReturnType<typeof signalsOf>;
   );
 
   log(`ETH-USDT and BTC-USDT daily bars ${date(all[first].t)} … ${date(all[all.length - 1].t)} (${all.length - first} days)`, Colors.WHITE);
+  // out-of-sample error of the next 3 days' log volatility: the AI against trailing volatility (smaller is better)
+  const forecastScores: Record<string, Record<string, number>> = {};
+  for (const coin of ["ETH", "BTC"] as const) {
+    const { closes: hour } = hourly[`${coin}-USDT`];
+    const rows = signals[coin].hourAt.slice(first).map((i, n) => ({ i, ai: signals[coin].aiVol[first + n], real: realizedNextVolatility(hour, i) }));
+    const scored = rows.filter((r) => Number.isFinite(r.ai) && Number.isFinite(r.real));
+    const mse = (pick: (r: (typeof scored)[number]) => number) => mean(scored.map((r) => (Math.log(pick(r)) - Math.log(r.real)) ** 2));
+    forecastScores[coin] = {
+      days: scored.length,
+      ai: mse((r) => r.ai),
+      trailing3d: mse((r) => hourlyVolatility(hour, r.i, 72)),
+      trailing30d: mse((r) => hourlyVolatility(hour, r.i, 720)),
+    };
+    const f = forecastScores[coin];
+    log(`${coin} next-3-day log-volatility MSE (${f.days} days): AI ${f.ai.toFixed(3)}, trailing 3d ${f.trailing3d.toFixed(3)}, trailing 30d ${f.trailing30d.toFixed(3)}`, Colors.WHITE);
+  }
   for (const cost of COSTS) {
     log(`\ncost ${(cost * 100).toFixed(1)}% per swap; per year, max drawdown, Sharpe; halves 2019–2022 / 2023+`, Colors.CYAN);
     log(
@@ -172,7 +206,7 @@ type SignalName = keyof ReturnType<typeof signalsOf>;
   const file = `${cryptoConfig.paths.storageDir}/strategy-check-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
   fse.writeJsonSync(
     file,
-    { from: date(all[first].t), to: date(all[all.length - 1].t), costs: COSTS, guards: GUARDS, targetVolatility: TARGET_VOLATILITY, results },
+    { from: date(all[first].t), to: date(all[all.length - 1].t), forecastScores, costs: COSTS, guards: GUARDS, targetVolatility: TARGET_VOLATILITY, results },
     { spaces: 2 }
   );
   log(`report saved to ${file}`, Colors.GREEN);
