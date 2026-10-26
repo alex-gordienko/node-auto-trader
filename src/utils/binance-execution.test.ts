@@ -4,7 +4,7 @@ import os from "os";
 import path from "path";
 import { test } from "node:test";
 
-import { floorToStep, refuseBaseUrl, roundToTick, slippageBps } from "./binance-execution";
+import { floorToStep, reconcileOrders, refuseBaseUrl, roundToTick, slippageBps } from "./binance-execution";
 import { BinanceExecution } from "../services/BinanceExecution.service";
 
 test("only testnet hosts receive orders unless live trading is enabled twice", () => {
@@ -89,4 +89,27 @@ test("a stop file blocks a buy here too, and a non-testnet URL never reaches the
   assert.strictEqual(entry.status, "refused");
   assert.match(entry.note ?? "", /not a Binance testnet/);
   assert.strictEqual(calls.length, 0, "the refused host was never contacted");
+});
+
+test("the testnet follows the paper legs, including a position bought before testnet mode", () => {
+  const prices = { BTC: 80000, ETH: 4000 };
+  // the paper book already holds both coins, the testnet nothing: both are bought
+  const start = reconcileOrders("vote", { BTC: 0.00311, ETH: 0.0535 }, () => 0, prices, 10, 15);
+  assert.deepStrictEqual(start.map((o) => [o.symbol, o.side]), [["BTCUSDT", "BUY"], ["ETHUSDT", "BUY"]]);
+  assert.ok(Math.abs(start[1].usd - 0.0535 * 4000) < 1e-9 && start[1].refPrice === 4000 && !start[1].all);
+  // in line, or off by fee dust worth less than the minimum trade: nothing to do
+  assert.deepStrictEqual(reconcileOrders("vote", { BTC: 0.00311, ETH: 0.0535 }, (s) => (s === "BTCUSDT" ? 0.00311 : 0.05345), prices, 10, 15), []);
+  // the paper leg left the market: everything held is sold
+  const exit = reconcileOrders("vote", { BTC: 0, ETH: 0.0535 }, (s) => (s === "BTCUSDT" ? 0.0031 : 0.0535), prices, 10, 15);
+  assert.deepStrictEqual(exit.map((o) => [o.symbol, o.side, o.all]), [["BTCUSDT", "SELL", true]]);
+});
+
+test("pending counts a strategy's queued orders until they are done", async () => {
+  const { http } = fakeExchange();
+  const { ex } = adapter("https://demo-api.binance.com", http);
+  const done = ex.submit({ strategy: "vote", symbol: "ETHUSDT", side: "BUY", usd: 1000, refPrice: 2000, paperCostBps: 15 });
+  assert.strictEqual(ex.pending("vote"), 1);
+  await done;
+  assert.strictEqual(ex.pending("vote"), 0);
+  assert.ok(ex.held("vote", "ETHUSDT") > 0.49);
 });

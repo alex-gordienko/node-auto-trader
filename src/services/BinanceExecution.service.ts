@@ -54,6 +54,7 @@ const axiosHttp: Http = async (req) => (await axios(req)).data;
  */
 export class BinanceExecution {
   private queue: Promise<void> = Promise.resolve();
+  private pendingBy = new Map<string, number>();
   private filters = new Map<string, IFilters>();
 
   constructor(
@@ -254,13 +255,26 @@ export class BinanceExecution {
 
   /** Queues the mirror order of a paper fill; never throws — a failed order is logged and recorded. */
   public submit(req: IOrderRequest): Promise<void> {
+    this.pendingBy.set(req.strategy, this.pending(req.strategy) + 1);
     this.queue = this.queue.then(() =>
-      this.execute(req).catch((error) => {
-        log(`${req.strategy}: testnet ${req.side} ${req.symbol} failed: ${error}`, Colors.RED);
-        this.record({ ...req, at: Date.now(), status: "failed", note: String(error), orders: [], qty: 0, quote: 0, avgPrice: 0, feeUsd: 0, slippageBps: 0, feeBps: 0 });
-      })
+      this.execute(req)
+        .catch((error) => {
+          log(`${req.strategy}: testnet ${req.side} ${req.symbol} failed: ${error}`, Colors.RED);
+          this.record({ ...req, at: Date.now(), status: "failed", note: String(error), orders: [], qty: 0, quote: 0, avgPrice: 0, feeUsd: 0, slippageBps: 0, feeBps: 0 });
+        })
+        .finally(() => this.pendingBy.set(req.strategy, this.pending(req.strategy) - 1))
     );
     return this.queue;
+  }
+
+  /** Orders of the strategy still waiting in the queue or being placed. */
+  public pending(strategy: string): number {
+    return this.pendingBy.get(strategy) ?? 0;
+  }
+
+  /** Base asset the strategy bought here and still holds. */
+  public held(strategy: string, symbol: string): number {
+    return this.holdings()[strategy]?.[symbol] ?? 0;
   }
 
   /** Free balances of the account, for the start-up log. */
