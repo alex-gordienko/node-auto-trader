@@ -8,6 +8,7 @@ import StorageService from "./Local.storage.service";
 import KillSwitchService from "./KillSwitch.service";
 import BinanceExecutionService from "./BinanceExecution.service";
 import { Colors, createLogger } from "../utils/colored-console";
+import { reconcileOrders } from "../utils/binance-execution";
 import { IPaperFill, IPaperLeg, rebalanceLeg, toDailyBars, voteTarget } from "../utils/daily-strategy";
 import { forecastVolatility, TRAIN_DAYS } from "../utils/vol-model";
 
@@ -94,16 +95,6 @@ class VoteTraderService {
     p.legs[coin] = leg;
     p.fills.push({ ...fill, at: now, coin });
     log(`paper ${fill.side.toUpperCase()} ${coin} for ${fill.usd.toFixed(2)} USDT at ${fill.price.toFixed(2)} (fee ${fill.fee.toFixed(2)})`, Colors.GREEN);
-    // EXECUTION_MODE=testnet: the same fill as a testnet order, after the stop-crane already allowed it
-    BinanceExecutionService.mirror({
-      strategy: NAME,
-      symbol: `${coin}USDT`,
-      side: fill.side === "buy" ? "BUY" : "SELL",
-      usd: fill.usd,
-      all: fill.closedPnl !== null,
-      refPrice: price,
-      paperCostBps: (feeRate + slippage) * 1e4,
-    });
     if (fill.side === "buy") KillSwitchService.opened(NAME);
     if (fill.closedPnl !== null) KillSwitchService.closed(NAME, fill.closedPnl, this.rules);
   }
@@ -146,6 +137,15 @@ class VoteTraderService {
       }
     }
     this.write(p);
+
+    // EXECUTION_MODE=testnet: the testnet follows the paper legs — every fill above, and a position the paper book held
+    // before testnet mode was switched on. Buys here only copy what the stop-crane already let the paper book buy.
+    if (BinanceExecutionService.enabled && !BinanceExecutionService.pending(NAME)) {
+      const { feeRate, slippage, minTradeUsd } = cryptoConfig.vote;
+      const paperQty = Object.fromEntries(coins.map((c) => [c, p.legs[c].qty]));
+      const held = (symbol: string) => BinanceExecutionService.held(NAME, symbol);
+      reconcileOrders(NAME, paperQty, held, prices, minTradeUsd, (feeRate + slippage) * 1e4).forEach((o) => BinanceExecutionService.mirror(o));
+    }
 
     const value = equity();
     const hold = coins.reduce((s, c) => s + prices[c] / p.startPrices[c], 0) / coins.length - 1;

@@ -1,3 +1,5 @@
+import type { IOrderRequest } from "../services/BinanceExecution.service";
+
 /**
  * Pure helpers of the Binance order adapter (services/BinanceExecution.service.ts): which base URL may receive
  * orders, exchange-filter rounding, and how a fill compares with the price the paper book assumed.
@@ -45,3 +47,22 @@ export const roundToTick = (price: number, tick: string, side: "BUY" | "SELL"): 
 /** How much worse than `ref` the average fill was, in bps (negative = better). */
 export const slippageBps = (side: "BUY" | "SELL", avgPrice: number, ref: number): number =>
   (side === "BUY" ? avgPrice / ref - 1 : ref / avgPrice - 1) * 1e4;
+
+/**
+ * Orders that bring a strategy's testnet holdings to its paper position, coin by coin; differences worth less than
+ * `minUsd` are left alone (fee dust). A paper leg at zero sells everything the strategy holds there.
+ */
+export const reconcileOrders = (
+  strategy: string,
+  paperQty: Record<string, number>, // coin → quantity held on paper
+  held: (symbol: string) => number, // the strategy's testnet holdings
+  prices: Record<string, number>,
+  minUsd: number,
+  paperCostBps: number
+): IOrderRequest[] =>
+  Object.entries(paperQty).flatMap(([coin, qty]) => {
+    const symbol = `${coin}USDT`;
+    const diff = qty - held(symbol);
+    if (Math.abs(diff) * prices[coin] < minUsd) return [];
+    return [{ strategy, symbol, side: diff > 0 ? "BUY" : "SELL", usd: Math.abs(diff) * prices[coin], all: qty === 0, refPrice: prices[coin], paperCostBps }];
+  });
